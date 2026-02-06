@@ -179,9 +179,20 @@ const login = async (req, res) => {
       return res.status(400).json({ message: 'Email and password required' });
     }
 
-    const user = await usersModel.findUserByEmail(email);
+    // ✅ נרמול אימייל פעם אחת
+    const normalizedEmail = email.toLowerCase().trim();
 
-    if (!user) {
+    console.log('LOGIN EMAIL RAW:', email);
+    console.log('LOGIN EMAIL NORMALIZED:', normalizedEmail);
+
+    // ✅ חיפוש עם אימייל מנורמל + password
+    const user = await usersModel.findUserByEmailWithPassword(normalizedEmail);
+
+    console.log('USER FOUND:', Boolean(user));
+    console.log('HAS PASSWORD:', Boolean(user?.password));
+
+    // ✅ הגנה לפני bcrypt
+    if (!user || !user.password) {
       return res.status(401).json({ message: 'User not registered' });
     }
 
@@ -203,15 +214,14 @@ const login = async (req, res) => {
       { expiresIn: '1h' }
     );
 
-    return res.status(200).json({
-      accessToken
-    });
+    return res.status(200).json({ accessToken });
 
   } catch (err) {
-    console.error(err);
+    console.error('LOGIN ERROR:', err);
     return res.status(500).json({ message: 'Server error' });
   }
 };
+
 
 /* ================= LOGOUT ================= */
 
