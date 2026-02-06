@@ -66,7 +66,7 @@ const getResendClient = () => {
 };
 
 const getFromAddress = () => {
-  const raw = process.env.MAIL_FROM || 'chaimsonb@gmail.com';
+  const raw = process.env.MAIL_FROM || 'Acme <onboarding@resend.dev>';
   return raw.includes('<') ? raw : `Bank One One <${raw}>`;
 };
 
@@ -87,8 +87,8 @@ const sendEmail = async ({ to, subject, html }) => {
     from: getFromAddress(),
     to: [to],
     subject,
-    html,
-    attachments: [getLogoAttachment()]
+    html
+   // attachments: [getLogoAttachment()]
   });
 
   if (error) {
@@ -137,8 +137,9 @@ export const sendVerificationEmail = async (email, token) => {
       </a>
     </div>
   `;
-
+    console.log(email);
   const result = await sendEmail({
+
     to: email,
     subject: 'Verify your Bank One One account',
     html: emailLayout(content)
