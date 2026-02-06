@@ -222,57 +222,57 @@ const verify = async (req, res) => {
 //   }
 // };
 
-// /* ================= LOGIN ================= */
-// const login = async (req, res) => {
-//   try {
-//     const { email, password } = req.body;
+/* ================= LOGIN ================= */
+const login = async (req, res) => {
+  try {
+    const { email, password } = req.body;
 
-//     if (!email || !password) {
-//       return res.status(400).json({ message: 'Email and password required' });
-//     }
+    if (!email || !password) {
+      return res.status(400).json({ message: 'Email and password required' });
+    }
 
-//     // ✅ נרמול אימייל פעם אחת
-//     const normalizedEmail = email.toLowerCase().trim();
+    // ✅ נרמול אימייל פעם אחת
+    const normalizedEmail = email.toLowerCase().trim();
 
-//     console.log('LOGIN EMAIL RAW:', email);
-//     console.log('LOGIN EMAIL NORMALIZED:', normalizedEmail);
+    console.log('LOGIN EMAIL RAW:', email);
+    console.log('LOGIN EMAIL NORMALIZED:', normalizedEmail);
 
-//     // ✅ חיפוש עם אימייל מנורמל + password
-//     const user = await usersModel.findUserByEmailWithPassword(normalizedEmail);
+    // ✅ חיפוש עם אימייל מנורמל + password
+    const user = await usersModel.findUserByEmailWithPassword(normalizedEmail);
 
-//     console.log('USER FOUND:', Boolean(user));
-//     console.log('HAS PASSWORD:', Boolean(user?.password));
+    console.log('USER FOUND:', Boolean(user));
+    console.log('HAS PASSWORD:', Boolean(user?.password));
 
-//     // ✅ הגנה לפני bcrypt
-//     if (!user || !user.password) {
-//       return res.status(401).json({ message: 'User not registered' });
-//     }
+    // ✅ הגנה לפני bcrypt
+    if (!user || !user.password) {
+      return res.status(401).json({ message: 'User not registered' });
+    }
 
-//     if (!user.isVerified) {
-//       return res.status(403).json({ message: 'Account not verified' });
-//     }
+    if (!user.isVerified) {
+      return res.status(403).json({ message: 'Account not verified' });
+    }
 
-//     const match = await bcrypt.compare(password, user.password);
-//     if (!match) {
-//       return res.status(401).json({ message: 'Invalid credentials' });
-//     }
+    const match = await bcrypt.compare(password, user.password);
+    if (!match) {
+      return res.status(401).json({ message: 'Invalid credentials' });
+    }
 
-//     const accessToken = jwt.sign(
-//       {
-//         userId: user._id,
-//         email: user.email
-//       },
-//       JWT_SECRET,
-//       { expiresIn: '1h' }
-//     );
+    const accessToken = jwt.sign(
+      {
+        userId: user._id,
+        email: user.email
+      },
+      JWT_SECRET,
+      { expiresIn: '1h' }
+    );
 
-//     return res.status(200).json({ accessToken });
+    return res.status(200).json({ accessToken });
 
-//   } catch (err) {
-//     console.error('LOGIN ERROR:', err);
-//     return res.status(500).json({ message: 'Server error' });
-//   }
-// };
+  } catch (err) {
+    console.error('LOGIN ERROR:', err);
+    return res.status(500).json({ message: 'Server error' });
+  }
+};
 
 
 // /* ================= LOGOUT ================= */
