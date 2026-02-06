@@ -179,7 +179,7 @@ const login = async (req, res) => {
       return res.status(400).json({ message: 'Email and password required' });
     }
 
-    const user = await usersModel.findUserByEmailWithPassword(email);
+    const user = await usersModel.findUserByEmail(email);
 
     if (!user) {
       return res.status(401).json({ message: 'User not registered' });
