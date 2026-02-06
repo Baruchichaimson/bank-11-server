@@ -94,43 +94,30 @@ const renderVerifyHtml = (res, statusCode, title, message) => {
   `);
 };
 
+
 const verify = async (req, res) => {
   const frontendBaseUrl =
     process.env.FRONTEND_BASE_URL || process.env.APP_BASE_URL;
+
   try {
-    const { token: rawToken } = req.query;
-    const token = Array.isArray(rawToken) ? rawToken[0] : rawToken;
-    const wantsHtml = req.headers.accept?.includes('text/html');
+    const { token } = req.query;
 
     if (!token || typeof token !== 'string' || !token.trim()) {
-      if (wantsHtml) {
-        return renderVerifyHtml(res, 400, 'Verification failed', 'Token is required.');
-      }
-      return res.status(400).json({ message: 'Token is required' });
+      return res.redirect(`${frontendBaseUrl}/login?verified=0`);
     }
 
-    const normalizedToken = token.trim();
+    const user = await usersModel.findUserByVerificationToken(token.trim());
 
-    const user = await usersModel.findUserByVerificationToken(normalizedToken);
     if (!user) {
-      if (wantsHtml) {
-        return renderVerifyHtml(res, 404, 'Verification failed', 'Invalid token.');
-      }
-      return res.status(404).json({ message: 'Invalid token' });
+      return res.redirect(`${frontendBaseUrl}/login?verified=0`);
     }
 
     if (user.isVerified) {
-      if (wantsHtml) {
-        return renderVerifyHtml(res, 200, 'Already verified', 'This account is already verified.');
-      }
-      return res.status(400).json({ message: 'User already verified' });
+      return res.redirect(`${frontendBaseUrl}/login?verified=1`);
     }
 
     if (Date.now() > user.verificationExpires) {
-      if (wantsHtml) {
-        return renderVerifyHtml(res, 400, 'Verification failed', 'Token expired.');
-      }
-      return res.status(400).json({ message: 'Token expired' });
+      return res.redirect(`${frontendBaseUrl}/login?verified=0`);
     }
 
     user.isVerified = true;
@@ -139,97 +126,156 @@ const verify = async (req, res) => {
     await user.save();
 
     const account = await accountsModel.findAccountByUserId(user._id);
-    if (account) 
-    {
+    if (account) {
       await accountsModel.updateAccountStatus(account._id, 'ACTIVE');
     }
 
-    const accessToken = jwt.sign(
-      {
-        userId: user._id,
-        email: user.email
-      },
-      JWT_SECRET,
-      { expiresIn: '1h' }
-    );
-
-    if (wantsHtml) {
-      return renderVerifyHtml(
-        res,
-        200,
-        'Verified successfully',
-        'Your account has been verified.'
-      );
-    }
-
-    return res.status(200).json({
-      message: 'Account verified successfully',
-      accessToken
-    });
+    // ✅ הצלחה
+    return res.redirect(`${frontendBaseUrl}/login?verified=1`);
 
   } catch (err) {
-    console.error(err);
-    if (req.headers.accept?.includes('text/html')) {
-      return renderVerifyHtml(res, 500, 'Verification failed', 'Server error.');
-    }
-    return res.status(500).json({ message: 'Server error' });
-  }
-};
-
-/* ================= LOGIN ================= */
-const login = async (req, res) => {
-  try {
-    const { email, password } = req.body;
-
-    if (!email || !password) {
-      return res.status(400).json({ message: 'Email and password required' });
-    }
-
-    // ✅ נרמול אימייל פעם אחת
-    const normalizedEmail = email.toLowerCase().trim();
-
-    console.log('LOGIN EMAIL RAW:', email);
-    console.log('LOGIN EMAIL NORMALIZED:', normalizedEmail);
-
-    // ✅ חיפוש עם אימייל מנורמל + password
-    const user = await usersModel.findUserByEmailWithPassword(normalizedEmail);
-
-    console.log('USER FOUND:', Boolean(user));
-    console.log('HAS PASSWORD:', Boolean(user?.password));
-
-    // ✅ הגנה לפני bcrypt
-    if (!user || !user.password) {
-      return res.status(401).json({ message: 'User not registered' });
-    }
-
-    if (!user.isVerified) {
-      return res.status(403).json({ message: 'Account not verified' });
-    }
-
-    const match = await bcrypt.compare(password, user.password);
-    if (!match) {
-      return res.status(401).json({ message: 'Invalid credentials' });
-    }
-
-    const accessToken = jwt.sign(
-      {
-        userId: user._id,
-        email: user.email
-      },
-      JWT_SECRET,
-      { expiresIn: '1h' }
-    );
-
-    return res.status(200).json({ accessToken });
-
-  } catch (err) {
-    console.error('LOGIN ERROR:', err);
-    return res.status(500).json({ message: 'Server error' });
+    console.error('VERIFY ERROR:', err);
+    return res.redirect(`${frontendBaseUrl}/login?verified=0`);
   }
 };
 
 
-/* ================= LOGOUT ================= */
+// const verify = async (req, res) => {
+//   const frontendBaseUrl =
+//     process.env.FRONTEND_BASE_URL || process.env.APP_BASE_URL;
+//   try {
+//     const { token: rawToken } = req.query;
+//     const token = Array.isArray(rawToken) ? rawToken[0] : rawToken;
+//     const wantsHtml = req.headers.accept?.includes('text/html');
+
+//     if (!token || typeof token !== 'string' || !token.trim()) {
+//       if (wantsHtml) {
+//         return renderVerifyHtml(res, 400, 'Verification failed', 'Token is required.');
+//       }
+//       return res.status(400).json({ message: 'Token is required' });
+//     }
+
+//     const normalizedToken = token.trim();
+
+//     const user = await usersModel.findUserByVerificationToken(normalizedToken);
+//     if (!user) {
+//       if (wantsHtml) {
+//         return renderVerifyHtml(res, 404, 'Verification failed', 'Invalid token.');
+//       }
+//       return res.status(404).json({ message: 'Invalid token' });
+//     }
+
+//     if (user.isVerified) {
+//       if (wantsHtml) {
+//         return renderVerifyHtml(res, 200, 'Already verified', 'This account is already verified.');
+//       }
+//       return res.status(400).json({ message: 'User already verified' });
+//     }
+
+//     if (Date.now() > user.verificationExpires) {
+//       if (wantsHtml) {
+//         return renderVerifyHtml(res, 400, 'Verification failed', 'Token expired.');
+//       }
+//       return res.status(400).json({ message: 'Token expired' });
+//     }
+
+//     user.isVerified = true;
+//     user.verificationToken = null;
+//     user.verificationExpires = null;
+//     await user.save();
+
+//     const account = await accountsModel.findAccountByUserId(user._id);
+//     if (account) 
+//     {
+//       await accountsModel.updateAccountStatus(account._id, 'ACTIVE');
+//     }
+
+//     const accessToken = jwt.sign(
+//       {
+//         userId: user._id,
+//         email: user.email
+//       },
+//       JWT_SECRET,
+//       { expiresIn: '1h' }
+//     );
+
+//     if (wantsHtml) {
+//       return renderVerifyHtml(
+//         res,
+//         200,
+//         'Verified successfully',
+//         'Your account has been verified.'
+//       );
+//     }
+
+//     return res.status(200).json({
+//       message: 'Account verified successfully',
+//       accessToken
+//     });
+
+//   } catch (err) {
+//     console.error(err);
+//     if (req.headers.accept?.includes('text/html')) {
+//       return renderVerifyHtml(res, 500, 'Verification failed', 'Server error.');
+//     }
+//     return res.status(500).json({ message: 'Server error' });
+//   }
+// };
+
+// /* ================= LOGIN ================= */
+// const login = async (req, res) => {
+//   try {
+//     const { email, password } = req.body;
+
+//     if (!email || !password) {
+//       return res.status(400).json({ message: 'Email and password required' });
+//     }
+
+//     // ✅ נרמול אימייל פעם אחת
+//     const normalizedEmail = email.toLowerCase().trim();
+
+//     console.log('LOGIN EMAIL RAW:', email);
+//     console.log('LOGIN EMAIL NORMALIZED:', normalizedEmail);
+
+//     // ✅ חיפוש עם אימייל מנורמל + password
+//     const user = await usersModel.findUserByEmailWithPassword(normalizedEmail);
+
+//     console.log('USER FOUND:', Boolean(user));
+//     console.log('HAS PASSWORD:', Boolean(user?.password));
+
+//     // ✅ הגנה לפני bcrypt
+//     if (!user || !user.password) {
+//       return res.status(401).json({ message: 'User not registered' });
+//     }
+
+//     if (!user.isVerified) {
+//       return res.status(403).json({ message: 'Account not verified' });
+//     }
+
+//     const match = await bcrypt.compare(password, user.password);
+//     if (!match) {
+//       return res.status(401).json({ message: 'Invalid credentials' });
+//     }
+
+//     const accessToken = jwt.sign(
+//       {
+//         userId: user._id,
+//         email: user.email
+//       },
+//       JWT_SECRET,
+//       { expiresIn: '1h' }
+//     );
+
+//     return res.status(200).json({ accessToken });
+
+//   } catch (err) {
+//     console.error('LOGIN ERROR:', err);
+//     return res.status(500).json({ message: 'Server error' });
+//   }
+// };
+
+
+// /* ================= LOGOUT ================= */
 
 const logout = (req, res) => {
   return res.status(200).json({
