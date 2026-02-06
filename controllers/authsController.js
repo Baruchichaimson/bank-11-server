@@ -46,18 +46,24 @@ const signup = async (req, res) => {
       verificationExpires: Date.now() + 24 * 60 * 60 * 1000
     });
 
-    await accountsModel.createAccount(user._id);
+    /* 🔐 פעולות משניות – לא מפילות signup */
+try {
+  await accountsModel.createAccount(user._id);
+} catch (accountErr) {
+  console.error('Create account failed:', accountErr?.message || accountErr);
+}
 
-    try {
-      await sendVerificationEmail(email, verificationToken);
-    } catch (emailErr) {
-      // Don't fail signup on email delivery issues in dev.
-      console.error('Verification email failed:', emailErr?.message || emailErr);
-    }
+try {
+  await sendVerificationEmail(email, verificationToken);
+} catch (emailErr) {
+  console.error('Verification email failed:', emailErr?.message || emailErr);
+}
 
-    return res.status(201).json({
-      message: 'Registration successful. Please verify your email.'
-    });
+/* ✅ תמיד חוזרים הצלחה */
+return res.status(201).json({
+  message: 'Registration successful. Please verify your email.'
+});
+
 
   } catch (err) {
     console.error(err);
