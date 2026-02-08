@@ -103,21 +103,21 @@ const verify = async (req, res) => {
     const { token } = req.query;
 
     if (!token || typeof token !== 'string' || !token.trim()) {
-      return res.redirect(`${frontendBaseUrl}/login?verified=0`);
+      return res.redirect(`${frontendBaseUrl}/verify?verified=0`);
     }
 
     const user = await usersModel.findUserByVerificationToken(token.trim());
 
     if (!user) {
-      return res.redirect(`${frontendBaseUrl}/login?verified=0`);
+      return res.redirect(`${frontendBaseUrl}/verify?verified=0`);
     }
 
     if (user.isVerified) {
-      return res.redirect(`${frontendBaseUrl}/login?verified=1`);
+      return res.redirect(`${frontendBaseUrl}/verify?verified=1`);
     }
 
     if (Date.now() > user.verificationExpires) {
-      return res.redirect(`${frontendBaseUrl}/login?verified=0`);
+      return res.redirect(`${frontendBaseUrl}/verify?verified=0`);
     }
 
     user.isVerified = true;
@@ -130,97 +130,16 @@ const verify = async (req, res) => {
       await accountsModel.updateAccountStatus(account._id, 'ACTIVE');
     }
 
-    // ✅ הצלחה
-    return res.redirect(`${frontendBaseUrl}/login?verified=1`);
+    return res.redirect(`${frontendBaseUrl}/verify?verified=1`);
 
-  } catch (err) {
+  } 
+  catch (err) 
+  {
     console.error('VERIFY ERROR:', err);
-    return res.redirect(`${frontendBaseUrl}/login?verified=0`);
+    return res.redirect(`${frontendBaseUrl}/verify?verified=0`);
   }
 };
 
-
-// const verify = async (req, res) => {
-//   const frontendBaseUrl =
-//     process.env.FRONTEND_BASE_URL || process.env.APP_BASE_URL;
-//   try {
-//     const { token: rawToken } = req.query;
-//     const token = Array.isArray(rawToken) ? rawToken[0] : rawToken;
-//     const wantsHtml = req.headers.accept?.includes('text/html');
-
-//     if (!token || typeof token !== 'string' || !token.trim()) {
-//       if (wantsHtml) {
-//         return renderVerifyHtml(res, 400, 'Verification failed', 'Token is required.');
-//       }
-//       return res.status(400).json({ message: 'Token is required' });
-//     }
-
-//     const normalizedToken = token.trim();
-
-//     const user = await usersModel.findUserByVerificationToken(normalizedToken);
-//     if (!user) {
-//       if (wantsHtml) {
-//         return renderVerifyHtml(res, 404, 'Verification failed', 'Invalid token.');
-//       }
-//       return res.status(404).json({ message: 'Invalid token' });
-//     }
-
-//     if (user.isVerified) {
-//       if (wantsHtml) {
-//         return renderVerifyHtml(res, 200, 'Already verified', 'This account is already verified.');
-//       }
-//       return res.status(400).json({ message: 'User already verified' });
-//     }
-
-//     if (Date.now() > user.verificationExpires) {
-//       if (wantsHtml) {
-//         return renderVerifyHtml(res, 400, 'Verification failed', 'Token expired.');
-//       }
-//       return res.status(400).json({ message: 'Token expired' });
-//     }
-
-//     user.isVerified = true;
-//     user.verificationToken = null;
-//     user.verificationExpires = null;
-//     await user.save();
-
-//     const account = await accountsModel.findAccountByUserId(user._id);
-//     if (account) 
-//     {
-//       await accountsModel.updateAccountStatus(account._id, 'ACTIVE');
-//     }
-
-//     const accessToken = jwt.sign(
-//       {
-//         userId: user._id,
-//         email: user.email
-//       },
-//       JWT_SECRET,
-//       { expiresIn: '1h' }
-//     );
-
-//     if (wantsHtml) {
-//       return renderVerifyHtml(
-//         res,
-//         200,
-//         'Verified successfully',
-//         'Your account has been verified.'
-//       );
-//     }
-
-//     return res.status(200).json({
-//       message: 'Account verified successfully',
-//       accessToken
-//     });
-
-//   } catch (err) {
-//     console.error(err);
-//     if (req.headers.accept?.includes('text/html')) {
-//       return renderVerifyHtml(res, 500, 'Verification failed', 'Server error.');
-//     }
-//     return res.status(500).json({ message: 'Server error' });
-//   }
-// };
 
 /* ================= LOGIN ================= */
 const login = async (req, res) => {

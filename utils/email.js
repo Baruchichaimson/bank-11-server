@@ -1,7 +1,14 @@
-import fs from 'fs';
-import path from 'path';
-import { Resend } from 'resend';
+import Brevo from '@getbrevo/brevo';
 
+/* ======================
+   Brevo Client
+====================== */
+const apiInstance = new Brevo.TransactionalEmailsApi();
+
+apiInstance.setApiKey(
+  Brevo.TransactionalEmailsApiApiKeys.apiKey,
+  process.env.BREVO_API_KEY
+);
 
 /* ======================
    Email Layout (GLOBAL)
@@ -16,17 +23,14 @@ const emailLayout = (content) => `
       overflow:hidden;
       box-shadow:0 4px 12px rgba(0,0,0,0.08)
     ">
-
       <div style="
         background:linear-gradient(90deg,#1a73e8,#0b4fa2);
         padding:20px;
         text-align:center;
       ">
-        <img
-          src="cid:bank-logo"
-          alt="Bank One One"
-          style="max-width:140px"
-        />
+        <strong style="color:white;font-size:20px">
+          Bank One One
+        </strong>
       </div>
 
       <div style="padding:30px">
@@ -42,72 +46,34 @@ const emailLayout = (content) => `
       ">
         © ${new Date().getFullYear()} Bank One One · Secure Banking
       </div>
-
     </div>
   </div>
 `;
 
-let resendClient;
-
-const getResendClient = () => {
-  const apiKey = process.env.RESEND_API_KEY;
-  console.log("apikey:" , apiKey);
-  if (!apiKey) {
-    throw new Error(
-      'Missing RESEND_API_KEY. Set it in your environment to send email.'
-    );
-  }
-
-  if (!resendClient) {
-    resendClient = new Resend(apiKey);
-  }
-
-  return resendClient;
-};
-
-const getFromAddress = () => {
-  const raw = process.env.MAIL_FROM || 'Acme <onboarding@resend.dev>';
-  return raw.includes('<') ? raw : `Bank One One <${raw}>`;
-};
-
-const getLogoAttachment = () => {
-  const logoPath = path.join(process.cwd(), 'logo', 'bank-one-one-logo.png');
-  const content = fs.readFileSync(logoPath).toString('base64');
-
-  return {
-    content,
-    filename: 'bank-one-one-logo.png',
-    contentId: 'bank-logo'
-  };
-};
-
+/* ======================
+   Generic Send Function
+====================== */
 const sendEmail = async ({ to, subject, html }) => {
-  const resend = getResendClient();
-  const { data, error } = await resend.emails.send({
-    from: getFromAddress(),
-    to: [to],
+  const email = new Brevo.SendSmtpEmail({
+    to: [{ email: to }],
+    sender: {
+      email: process.env.MAIL_FROM,
+      name: process.env.MAIL_FROM_NAME || 'Bank One One'
+    },
     subject,
-    html
-   // attachments: [getLogoAttachment()]
+    htmlContent: html
   });
 
-  if (error) {
-    throw new Error(`Resend error: ${error.message}`);
-  }
-
-  return data;
+  await apiInstance.sendTransacEmail(email);
 };
 
 /* ======================
    Verification Email
 ====================== */
-
 export const sendVerificationEmail = async (email, token) => {
-  console.log('📨 Verification token:', token);
-  
   const backendBaseUrl = process.env.APP_BASE_URL;
-  console.log("backendBaseUrl:", backendBaseUrl);
-  const verificationLink = `${backendBaseUrl}/api/v1/auth/verify?token=${token}`;
+  const verificationLink =
+    `${backendBaseUrl}/api/v1/auth/verify?token=${token}`;
 
   const content = `
     <h2 style="color:#1a73e8; text-align:center">
@@ -122,41 +88,34 @@ export const sendVerificationEmail = async (email, token) => {
     </p>
 
     <div style="text-align:center; margin:30px 0">
-      <a
-        href="${verificationLink}"
-        style="
-          background:#1a73e8;
-          color:#ffffff;
-          padding:14px 26px;
-          border-radius:6px;
-          text-decoration:none;
-          font-size:16px;
-        "
-      >
+      <a href="${verificationLink}" style="
+        background:#1a73e8;
+        color:#ffffff;
+        padding:14px 26px;
+        border-radius:6px;
+        text-decoration:none;
+        font-size:16px;">
         Verify Account
       </a>
     </div>
   `;
-    console.log(email);
-  const result = await sendEmail({
 
+  await sendEmail({
     to: email,
     subject: 'Verify your Bank One One account',
     html: emailLayout(content)
   });
-  console.log("sendEmail:", result);
 };
 
 /* ======================
    Password Reset Email
 ====================== */
-
 export const sendPasswordResetEmail = async (email, token) => {
-  console.log('🔐 Reset token:', token);
-
   const frontendBaseUrl =
     process.env.FRONTEND_BASE_URL || process.env.APP_BASE_URL;
-  const resetLink = `${frontendBaseUrl}/reset-password?token=${token}`;
+
+  const resetLink =
+    `${frontendBaseUrl}/reset-password?token=${token}`;
 
   const content = `
     <h2 style="color:#1a73e8; text-align:center">
@@ -167,21 +126,17 @@ export const sendPasswordResetEmail = async (email, token) => {
 
     <p>
       We received a request to reset your password.
-      Click the button below to set a new password.
+      Click the button below to continue.
     </p>
 
     <div style="text-align:center; margin:30px 0">
-      <a
-        href="${resetLink}"
-        style="
-          background:#1a73e8;
-          color:#ffffff;
-          padding:14px 26px;
-          border-radius:6px;
-          text-decoration:none;
-          font-size:16px;
-        "
-      >
+      <a href="${resetLink}" style="
+        background:#1a73e8;
+        color:#ffffff;
+        padding:14px 26px;
+        border-radius:6px;
+        text-decoration:none;
+        font-size:16px;">
         Reset Password
       </a>
     </div>
