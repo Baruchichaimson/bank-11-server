@@ -1,15 +1,4 @@
-import * as Brevo from '@getbrevo/brevo';
-
-/* ======================
-   Brevo Client
-====================== */
-const apiInstance = new Brevo.TransactionalEmailsApi();
-
-// ⬅️ זה החלק הקריטי
-apiInstance.setApiKey(
-  Brevo.TransactionalEmailsApiApiKeys.apiKey,
-  process.env.BREVO_API_KEY
-);
+import fetch from 'node-fetch';
 
 /* ======================
    Email Layout (GLOBAL)
@@ -61,27 +50,36 @@ const sendEmail = async ({ to, subject, html }) => {
     hasApiKey: Boolean(process.env.BREVO_API_KEY)
   });
 
-  const email = new Brevo.SendSmtpEmail();
-
-  email.to = [{ email: to }];
-  email.sender = {
-    email: process.env.MAIL_FROM,
-    name: process.env.MAIL_FROM_NAME || 'Bank One One'
+  const payload = {
+    sender: {
+      email: process.env.MAIL_FROM,
+      name: process.env.MAIL_FROM_NAME || 'Bank One One'
+    },
+    to: [{ email: to }],
+    subject,
+    htmlContent: html
   };
-  email.subject = subject;
-  email.htmlContent = html;
 
-  try {
-    const result = await apiInstance.sendTransacEmail(email);
-    console.log('✅ Brevo response:', result);
-  } catch (err) {
+  const res = await fetch('https://api.brevo.com/v3/smtp/email', {
+    method: 'POST',
+    headers: {
+      'api-key': process.env.BREVO_API_KEY,
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify(payload)
+  });
+
+  if (!res.ok) {
+    const errorText = await res.text();
     console.error('❌ Brevo error:', {
-      status: err?.response?.status,
-      data: err?.response?.data,
-      message: err?.message
+      status: res.status,
+      data: errorText
     });
-    throw err;
+    throw new Error(`Brevo error: ${errorText}`);
   }
+
+  const result = await res.json();
+  console.log('✅ Brevo response:', result);
 };
 
 /* ======================
