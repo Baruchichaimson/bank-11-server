@@ -59,7 +59,6 @@ try {
   console.error('Verification email failed:', emailErr?.message || emailErr);
 }
 
-/* ✅ תמיד חוזרים הצלחה */
 return res.status(201).json({
   message: 'Registration successful. Please verify your email.'
 });
@@ -150,19 +149,16 @@ const login = async (req, res) => {
       return res.status(400).json({ message: 'Email and password required' });
     }
 
-    // ✅ נרמול אימייל פעם אחת
     const normalizedEmail = email.toLowerCase().trim();
 
     console.log('LOGIN EMAIL RAW:', email);
     console.log('LOGIN EMAIL NORMALIZED:', normalizedEmail);
 
-    // ✅ חיפוש עם אימייל מנורמל + password
     const user = await usersModel.findUserByEmailWithPassword(normalizedEmail);
 
     console.log('USER FOUND:', Boolean(user));
     console.log('HAS PASSWORD:', Boolean(user?.password));
 
-    // ✅ הגנה לפני bcrypt
     if (!user || !user.password) {
       return res.status(401).json({ message: 'User not registered' });
     }
