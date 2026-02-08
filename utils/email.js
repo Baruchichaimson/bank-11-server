@@ -61,19 +61,6 @@ const sendEmail = async ({ to, subject, html }) => {
     hasApiKey: Boolean(process.env.BREVO_API_KEY)
   });
 
-    try {
-    const result = await apiInstance.sendTransacEmail(email);
-    console.log('✅ Brevo response:', result);
-  } catch (err) {
-    console.error('❌ Brevo error:', {
-      status: err?.response?.status,
-      data: err?.response?.data,
-      message: err?.message
-    });
-    throw err;
-  }
-
-
   const email = new Brevo.SendSmtpEmail();
 
   email.to = [{ email: to }];
@@ -84,8 +71,17 @@ const sendEmail = async ({ to, subject, html }) => {
   email.subject = subject;
   email.htmlContent = html;
 
-  const result = await apiInstance.sendTransacEmail(email);
-  console.log('✅ Brevo response:', result);
+  try {
+    const result = await apiInstance.sendTransacEmail(email);
+    console.log('✅ Brevo response:', result);
+  } catch (err) {
+    console.error('❌ Brevo error:', {
+      status: err?.response?.status,
+      data: err?.response?.data,
+      message: err?.message
+    });
+    throw err;
+  }
 };
 
 /* ======================
