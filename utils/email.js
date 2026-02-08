@@ -1,10 +1,11 @@
-import Brevo from '@getbrevo/brevo';
+import * as Brevo from '@getbrevo/brevo';
 
 /* ======================
    Brevo Client
 ====================== */
 const apiInstance = new Brevo.TransactionalEmailsApi();
 
+// ⬅️ זה החלק הקריטי
 apiInstance.setApiKey(
   Brevo.TransactionalEmailsApiApiKeys.apiKey,
   process.env.BREVO_API_KEY
@@ -54,17 +55,24 @@ const emailLayout = (content) => `
    Generic Send Function
 ====================== */
 const sendEmail = async ({ to, subject, html }) => {
-  const email = new Brevo.SendSmtpEmail({
-    to: [{ email: to }],
-    sender: {
-      email: process.env.MAIL_FROM,
-      name: process.env.MAIL_FROM_NAME || 'Bank One One'
-    },
-    subject,
-    htmlContent: html
+  console.log('📨 Sending email via Brevo', {
+    to,
+    from: process.env.MAIL_FROM,
+    hasApiKey: Boolean(process.env.BREVO_API_KEY)
   });
 
-  await apiInstance.sendTransacEmail(email);
+  const email = new Brevo.SendSmtpEmail();
+
+  email.to = [{ email: to }];
+  email.sender = {
+    email: process.env.MAIL_FROM,
+    name: process.env.MAIL_FROM_NAME || 'Bank One One'
+  };
+  email.subject = subject;
+  email.htmlContent = html;
+
+  const result = await apiInstance.sendTransacEmail(email);
+  console.log('✅ Brevo response:', result);
 };
 
 /* ======================
