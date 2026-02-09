@@ -71,7 +71,7 @@ return res.status(201).json({
 };
 
 /* ================= VERIFY ================= */
-const renderVerifyHtml = (res, statusCode, title, message, result) => {
+const renderVerifyHtml = (res, statusCode, title, message) => {
   res.status(statusCode).send(`
     <!DOCTYPE html>
     <html lang="en">
@@ -81,22 +81,26 @@ const renderVerifyHtml = (res, statusCode, title, message, result) => {
         <title>${title}</title>
       </head>
       <body style="font-family: Arial, sans-serif; background:#f5f7fa; padding:40px;">
-        <div style="max-width:520px;margin:0 auto;background:#fff;border-radius:12px;padding:28px;box-shadow:0 10px 30px rgba(0,0,0,0.08);">
-          <h2 style="margin:0 0 12px 0;color:#0c4a6e;">${title}</h2>
-          <p style="margin:0;color:#334155;">${message}</p>
+        <div style="
+          max-width:520px;
+          margin:0 auto;
+          background:#fff;
+          border-radius:12px;
+          padding:28px;
+          box-shadow:0 10px 30px rgba(0,0,0,0.08);
+        ">
+          <h2 style="margin:0 0 12px 0;color:#0c4a6e;">
+            ${title}
+          </h2>
+
+          <p style="margin:0;color:#334155;">
+            ${message}
+          </p>
+
           <p style="margin:18px 0 0;color:#64748b;font-size:14px;">
-            You can return to the registration tab.
+            You can now close this tab and return to the application.
           </p>
         </div>
-
-        <script>
-          try {
-            localStorage.setItem(
-              'verification_result',
-              JSON.stringify({ status: '${result}' })
-            );
-          } catch (e) {}
-        </script>
       </body>
     </html>
   `);
@@ -112,8 +116,7 @@ const verify = async (req, res) => {
         res,
         400,
         'Verification failed',
-        'Invalid or missing verification token.',
-        'error'
+        'Invalid or missing verification token.'
       );
     }
 
@@ -124,8 +127,7 @@ const verify = async (req, res) => {
         res,
         400,
         'Verification failed',
-        'This verification link is invalid or has already been used.',
-        'error'
+        'This verification link is invalid or has already been used.'
       );
     }
 
@@ -134,28 +136,26 @@ const verify = async (req, res) => {
         res,
         200,
         'Account already verified',
-        'Your account is already verified. You can log in.',
-        'success'
+        'Your account is already verified. You can log in.'
       );
     }
 
-    if (Date.now() > user.verificationExpires) {
+    if (!user.verificationExpires || Date.now() > user.verificationExpires) {
       return renderVerifyHtml(
         res,
         400,
         'Verification link expired',
-        'This verification link has expired. Please register again.',
-        'error'
+        'This verification link has expired. Please register again.'
       );
     }
 
-    // verify user
+    // ✅ verify user
     user.isVerified = true;
     user.verificationToken = null;
     user.verificationExpires = null;
     await user.save();
 
-    // activate account if exists
+    // ✅ activate account if exists
     const account = await accountsModel.findAccountByUserId(user._id);
     if (account) {
       await accountsModel.updateAccountStatus(account._id, 'ACTIVE');
@@ -165,8 +165,7 @@ const verify = async (req, res) => {
       res,
       200,
       'Account verified successfully',
-      'Your account has been verified. You can now log in.',
-      'success'
+      'Your account has been verified. You can now log in.'
     );
   } catch (err) {
     console.error('VERIFY ERROR:', err);
@@ -174,8 +173,7 @@ const verify = async (req, res) => {
       res,
       500,
       'Verification error',
-      'An unexpected error occurred. Please try again later.',
-      'error'
+      'An unexpected error occurred. Please try again later.'
     );
   }
 };
