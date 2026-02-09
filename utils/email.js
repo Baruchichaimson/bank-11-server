@@ -43,11 +43,7 @@ const emailLayout = (content) => `
    Generic Send Function
 ====================== */
 const sendEmail = async ({ to, subject, html }) => {
-  console.log('📨 Sending email via Brevo', {
-    to,
-    from: process.env.MAIL_FROM,
-    hasApiKey: Boolean(process.env.BREVO_API_KEY)
-  });
+  
 
   const payload = {
     sender: {

@@ -71,7 +71,7 @@ return res.status(201).json({
 };
 
 /* ================= VERIFY ================= */
-const renderVerifyHtml = (res, statusCode, title, message) => {
+const renderVerifyHtml = (res, statusCode, title, message, result) => {
   res.status(statusCode).send(`
     <!DOCTYPE html>
     <html lang="en">
@@ -88,6 +88,15 @@ const renderVerifyHtml = (res, statusCode, title, message) => {
             You can return to the registration tab.
           </p>
         </div>
+
+        <script>
+          try {
+            localStorage.setItem(
+              'verification_result',
+              JSON.stringify({ status: '${result}' })
+            );
+          } catch (e) {}
+        </script>
       </body>
     </html>
   `);
@@ -95,49 +104,82 @@ const renderVerifyHtml = (res, statusCode, title, message) => {
 
 
 const verify = async (req, res) => {
-  const frontendBaseUrl =
-    process.env.FRONTEND_BASE_URL || process.env.APP_BASE_URL;
-
   try {
     const { token } = req.query;
 
     if (!token || typeof token !== 'string' || !token.trim()) {
-      return res.redirect(`${frontendBaseUrl}/verify?verified=0`);
+      return renderVerifyHtml(
+        res,
+        400,
+        'Verification failed',
+        'Invalid or missing verification token.',
+        'error'
+      );
     }
 
     const user = await usersModel.findUserByVerificationToken(token.trim());
 
     if (!user) {
-      return res.redirect(`${frontendBaseUrl}/verify?verified=0`);
+      return renderVerifyHtml(
+        res,
+        400,
+        'Verification failed',
+        'This verification link is invalid or has already been used.',
+        'error'
+      );
     }
 
     if (user.isVerified) {
-      return res.redirect(`${frontendBaseUrl}/verify?verified=1`);
+      return renderVerifyHtml(
+        res,
+        200,
+        'Account already verified',
+        'Your account is already verified. You can log in.',
+        'success'
+      );
     }
 
     if (Date.now() > user.verificationExpires) {
-      return res.redirect(`${frontendBaseUrl}/verify?verified=0`);
+      return renderVerifyHtml(
+        res,
+        400,
+        'Verification link expired',
+        'This verification link has expired. Please register again.',
+        'error'
+      );
     }
 
+    // verify user
     user.isVerified = true;
     user.verificationToken = null;
     user.verificationExpires = null;
     await user.save();
 
+    // activate account if exists
     const account = await accountsModel.findAccountByUserId(user._id);
     if (account) {
       await accountsModel.updateAccountStatus(account._id, 'ACTIVE');
     }
 
-    return res.redirect(`${frontendBaseUrl}/verify?verified=1`);
-
-  } 
-  catch (err) 
-  {
+    return renderVerifyHtml(
+      res,
+      200,
+      'Account verified successfully',
+      'Your account has been verified. You can now log in.',
+      'success'
+    );
+  } catch (err) {
     console.error('VERIFY ERROR:', err);
-    return res.redirect(`${frontendBaseUrl}/verify?verified=0`);
+    return renderVerifyHtml(
+      res,
+      500,
+      'Verification error',
+      'An unexpected error occurred. Please try again later.',
+      'error'
+    );
   }
 };
+
 
 
 /* ================= LOGIN ================= */
