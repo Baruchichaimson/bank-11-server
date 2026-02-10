@@ -1,6 +1,7 @@
 import bcrypt from 'bcrypt';
 import jwt from 'jsonwebtoken';
 import { randomUUID } from 'crypto';
+import crypto from 'crypto';
 
 import usersModel from '../models/usersModel.js';
 import accountsModel from '../models/accountsModel.js';
@@ -331,6 +332,40 @@ const verifyStatus = async (req, res) => {
   }
 };
 
+/* ================= JOTFORM IDENTITY ================= */
+const jotformIdentity = async (req, res) => {
+  try {
+    const secret = process.env.JOTFORM_AGENT_SECRET;
+    if (!secret) {
+      return res.status(503).json({
+        message: 'Jotform integration is not configured'
+      });
+    }
+
+    const userID = String(req.userId);
+    const userHash = crypto
+      .createHmac('sha256', secret)
+      .update(userID)
+      .digest('hex');
+
+    const user = req.userRecord;
+    const fullName = `${user.firstName || ''} ${user.lastName || ''}`.trim();
+
+    return res.status(200).json({
+      userID,
+      userHash,
+      metadata: {
+        name: fullName || user.email,
+        email: user.email,
+        company: 'Bank One One'
+      }
+    });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ message: 'Server error' });
+  }
+};
+
 export default {
   signup,
   verify,
@@ -338,5 +373,6 @@ export default {
   logout,
   forgotPassword,
   resetPassword,
-  verifyStatus
+  verifyStatus,
+  jotformIdentity
 };
