@@ -11,11 +11,6 @@ router.post('/logout', controller.logout);
 router.post('/forgot-password', controller.forgotPassword);
 router.post('/reset-password', controller.resetPassword);
 router.get('/verify-status', controller.verifyStatus);
-router.get(
-  '/jotform-identity',
-  authenticateToken,
-  requireVerifiedUser,
-  controller.jotformIdentity
-);
+router.get('/jotform-identity',authenticateToken,requireVerifiedUser, controller.jotformIdentity);
 
 export default router;
