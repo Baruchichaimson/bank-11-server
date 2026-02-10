@@ -208,14 +208,16 @@ const login = async (req, res) => {
     }
 
     const match = await bcrypt.compare(password, user.password);
-    if (!match) {
+    if (!match) 
+    {
       return res.status(401).json({ message: 'Invalid credentials' });
     }
 
     const accessToken = jwt.sign(
       {
         userId: user._id,
-        email: user.email
+        email: user.email,
+        firstName: user.firstName,
       },
       JWT_SECRET,
       { expiresIn: '1h' }
@@ -223,14 +225,16 @@ const login = async (req, res) => {
 
     return res.status(200).json({ accessToken });
 
-  } catch (err) {
+  } 
+  catch (err) 
+  {
     console.error('LOGIN ERROR:', err);
     return res.status(500).json({ message: 'Server error' });
   }
 };
 
 
-// /* ================= LOGOUT ================= */
+/* ================= LOGOUT ================= */
 
 const logout = (req, res) => {
   return res.status(200).json({
