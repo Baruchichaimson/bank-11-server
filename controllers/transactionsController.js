@@ -3,7 +3,8 @@ import accountsModel from '../models/accountsModel.js';
 import {
   transferMoney,
   findTransactionsByUserId,
-  findTransactionById
+  findTransactionById,
+  findSentTransactionByRecipientName
 } from '../models/transactionsModel.js';
 
 /* ================= CREATE TRANSACTION ================= */
@@ -86,8 +87,26 @@ const getTransactionById = async (req, res) => {
   return res.json(transaction);
 };
 
+/* ================= GET SENT TRANSACTION BY RECIPIENT NAME ================= */
+const getSentTransactionByRecipientName = async (req, res) => {
+  const { recipientName } = req.params;
+
+  if (!recipientName?.trim()) {
+    return res.status(400).json({ message: 'recipientName is required' });
+  }
+
+  const transaction = await findSentTransactionByRecipientName(req.userId, recipientName);
+
+  if (!transaction) {
+    return res.status(404).json({ message: 'Transaction not found' });
+  }
+
+  return res.json(transaction);
+};
+
 export default {
   createTransaction,
   getTransactions,
-  getTransactionById
+  getTransactionById,
+  getSentTransactionByRecipientName
 };

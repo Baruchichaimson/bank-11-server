@@ -93,3 +93,25 @@ export const findTransactionById = async (transactionId) => {
 
   return Transaction.findById(transactionId);
 };
+
+const escapeRegex = (value = "") => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+export const findSentTransactionByRecipientName = async (userId, recipientName) => {
+  const user = await User.findById(userId).select("email");
+  if (!user?.email) {
+    return null;
+  }
+
+  const normalizedName = recipientName?.trim();
+  if (!normalizedName) {
+    return null;
+  }
+
+  const safeName = escapeRegex(normalizedName);
+  const recipientEmailRegex = new RegExp(`^${safeName}@`, "i");
+
+  return Transaction.findOne({
+    fromEmail: user.email,
+    toEmail: recipientEmailRegex,
+  }).sort({ createdAt: -1 });
+};
