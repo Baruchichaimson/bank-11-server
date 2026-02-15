@@ -7,6 +7,7 @@ import { generateAssistantReply } from '../ai/chatAssistant.js';
 const CHAT_EVENT = 'chat_message';
 const REPLY_EVENT = 'bot_reply';
 const ERROR_EVENT = 'chat_error';
+const ALLOW_DEBUG_ERRORS = process.env.ASSISTANT_DEBUG_ERRORS === 'true';
 
 const getOrigins = () => {
   if (process.env.SOCKET_CORS_ORIGINS) {
@@ -85,7 +86,7 @@ export const initSocketServer = (httpServer) => {
         const details = String(err?.message || err);
         socket.emit(ERROR_EVENT, {
           message:
-            process.env.NODE_ENV === 'production'
+            process.env.NODE_ENV === 'production' && !ALLOW_DEBUG_ERRORS
               ? 'Assistant is temporarily unavailable'
               : `Assistant error: ${details}`
         });

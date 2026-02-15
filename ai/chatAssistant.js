@@ -1,8 +1,13 @@
-import { OPENAI_MODEL, hasOpenAiKey, openai } from './openaiClient.js';
+import {
+  AI_FALLBACK_MODEL,
+  AI_MODEL,
+  AI_PROVIDER,
+  aiClient,
+  hasAiKey
+} from './openaiClient.js';
 import { bankTools, executeBankTool } from './bankingTools.js';
 
 const MAX_HISTORY = 12;
-const FALLBACK_MODEL = 'gpt-4o-mini';
 
 const SYSTEM_PROMPT = `
 You are a secure banking assistant.
@@ -37,17 +42,18 @@ const isModelIssue = (err) => {
 
 const createChatCompletion = async (payload) => {
   try {
-    return await openai.chat.completions.create({
-      model: OPENAI_MODEL,
+    return await aiClient.chat.completions.create({
+      model: AI_MODEL,
       ...payload
     });
   } catch (err) {
-    if (!isModelIssue(err) || OPENAI_MODEL === FALLBACK_MODEL) {
+    const hasFallback = Boolean(AI_FALLBACK_MODEL);
+    if (!isModelIssue(err) || !hasFallback || AI_MODEL === AI_FALLBACK_MODEL) {
       throw err;
     }
 
-    return openai.chat.completions.create({
-      model: FALLBACK_MODEL,
+    return aiClient.chat.completions.create({
+      model: AI_FALLBACK_MODEL,
       ...payload
     });
   }
@@ -66,9 +72,9 @@ export const generateAssistantReply = async ({
     };
   }
 
-  if (!hasOpenAiKey || !openai) {
+  if (!hasAiKey || !aiClient) {
     return {
-      reply: 'OPENAI_API_KEY is missing on the server, so the assistant is currently unavailable.',
+      reply: `AI API key is missing for provider "${AI_PROVIDER}", so the assistant is currently unavailable.`,
       nextHistory: history
     };
   }
