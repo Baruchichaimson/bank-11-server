@@ -82,10 +82,14 @@ export const initSocketServer = (httpServer) => {
         history = nextHistory;
         socket.emit(REPLY_EVENT, { message: reply });
       } catch (err) {
+        const details = String(err?.message || err);
         socket.emit(ERROR_EVENT, {
-          message: 'Assistant is temporarily unavailable'
+          message:
+            process.env.NODE_ENV === 'production'
+              ? 'Assistant is temporarily unavailable'
+              : `Assistant error: ${details}`
         });
-        console.error('Socket assistant error:', err?.message || err);
+        console.error('Socket assistant error:', details);
       }
     });
 
