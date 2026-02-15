@@ -1,6 +1,5 @@
 import express from 'express';
 import controller from '../controllers/authsController.js';
-import { authenticateToken, requireVerifiedUser } from '../middleware/auth.js';
 
 const router = express.Router();
 
@@ -11,6 +10,5 @@ router.post('/logout', controller.logout);
 router.post('/forgot-password', controller.forgotPassword);
 router.post('/reset-password', controller.resetPassword);
 router.get('/verify-status', controller.verifyStatus);
-router.get('/jotform-identity',authenticateToken,requireVerifiedUser, controller.jotformIdentity);
 
 export default router;

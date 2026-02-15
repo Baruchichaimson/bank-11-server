@@ -59,7 +59,6 @@ export const transferMoney = async ({
       ],
       { session }
     );
-
     await session.commitTransaction();
     session.endSession();
 
@@ -110,7 +109,7 @@ export const findSentTransactionByRecipientName = async (userId, recipientName) 
   const safeName = escapeRegex(normalizedName);
   const recipientEmailRegex = new RegExp(`^${safeName}@`, "i");
 
-  return Transaction.findOne({
+  return Transaction.find({
     fromEmail: user.email,
     toEmail: recipientEmailRegex,
   }).sort({ createdAt: -1 });
