@@ -11,6 +11,7 @@ import accountsRoutes from './routes/accountsRoutes.js';
 import transactionsRoutes from './routes/transactionsRoutes.js';
 import healthRoutes from './routes/healthRoutes.js';
 import { initSocketServer } from './socket/socketServer.js';
+import { getAllowedOrigins } from './config/corsOrigins.js';
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -23,11 +24,7 @@ app.use(express.json());
 app.use(cookieParser());
 
 app.use(cors({
-  origin: [
-    'http://localhost:5173',
-    'http://localhost:3000',
-    'https://bank-11-client.vercel.app'
-  ],
+  origin: getAllowedOrigins(),
   credentials: true,
 }));
 

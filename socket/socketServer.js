@@ -5,6 +5,7 @@ import accountsModel from '../models/accountsModel.js';
 import { findTransactionsByUserId } from '../models/transactionsModel.js';
 import { JWT_SECRET } from '../middleware/auth.js';
 import { generateAssistantReply } from '../ai/chatAssistant.js';
+import { getAllowedOrigins } from '../config/corsOrigins.js';
 
 const CHAT_EVENT = 'chat_message';
 const REPLY_EVENT = 'bot_reply';
@@ -52,22 +53,10 @@ const clearPendingCall = (callId) => {
   pendingCalls.delete(callId);
 };
 
-const getOrigins = () => {
-  if (process.env.SOCKET_CORS_ORIGINS) {
-    return process.env.SOCKET_CORS_ORIGINS.split(',').map((v) => v.trim());
-  }
-
-  return [
-    'http://localhost:5173',
-    'http://localhost:3000',
-    'https://bank-11-frontend.vercel.app'
-  ];
-};
-
 export const initSocketServer = (httpServer) => {
   const io = new Server(httpServer, {
     cors: {
-      origin: getOrigins(),
+      origin: getAllowedOrigins(),
       credentials: true
     }
   });
