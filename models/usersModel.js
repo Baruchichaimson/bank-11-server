@@ -10,6 +10,13 @@ const findUserByEmail = async (email) => {
   return User.findOne({ email });
 };
 
+const findVerifiedUserByEmail = async (email) => {
+  return User.findOne({
+    email: String(email || '').toLowerCase().trim(),
+    isVerified: true
+  });
+};
+
 const findUserByEmailWithPassword = async (email) => {
   return User.findOne({ email }).select('+password');
 };
@@ -41,6 +48,7 @@ const verifyUser = async (userId) => {
 export default {
   createUser,
   findUserByEmail,
+  findVerifiedUserByEmail,
   findUserByEmailWithPassword,
   findUserById,
   findUserByVerificationToken,

@@ -1,47 +1,29 @@
 import OpenAI from 'openai';
 
-const normalized = (value, fallback = '') =>
-  String(value || fallback).trim();
+export const AI_PROVIDER = String(process.env.AI_PROVIDER || 'openai').toLowerCase();
 
-export const AI_PROVIDER = normalized(
-  process.env.AI_PROVIDER,
-  process.env.GROK_API_KEY ? 'grok' : 'openai'
-).toLowerCase();
+const isOllama = AI_PROVIDER === 'ollama';
 
-const providerConfig = {
-  openai: {
-    apiKey: normalized(process.env.AI_API_KEY, process.env.OPENAI_API_KEY),
-    model: normalized(process.env.AI_MODEL, process.env.OPENAI_MODEL || 'gpt-4o-mini'),
-    baseURL: normalized(process.env.AI_BASE_URL, process.env.OPENAI_BASE_URL)
-  },
-  grok: {
-    apiKey: normalized(process.env.AI_API_KEY, process.env.GROK_API_KEY),
-    model: normalized(process.env.AI_MODEL, process.env.GROK_MODEL || 'grok-2-latest'),
-    baseURL: normalized(process.env.AI_BASE_URL, process.env.GROK_BASE_URL || 'https://api.x.ai/v1')
-  }
-};
+const apiKey = isOllama
+  ? process.env.OLLAMA_API_KEY || process.env.OPENAI_API_KEY || 'ollama'
+  : process.env.OPENAI_API_KEY || '';
+const baseURL = isOllama
+  ? process.env.OLLAMA_BASE_URL || 'http://localhost:11434/v1'
+  : process.env.OPENAI_BASE_URL || '';
 
-const activeConfig = providerConfig[AI_PROVIDER] || providerConfig.openai;
+export const hasOpenAiKey = isOllama ? Boolean(baseURL) : Boolean(apiKey);
 
-const apiKey = activeConfig.apiKey;
-const baseURL = activeConfig.baseURL;
-
-export const hasAiKey = Boolean(apiKey);
-
-export const aiClient = hasAiKey
+export const openai = hasOpenAiKey
   ? new OpenAI({
       apiKey,
       ...(baseURL ? { baseURL } : {})
     })
   : null;
 
-export const AI_MODEL = activeConfig.model;
-export const AI_FALLBACK_MODEL = normalized(
-  process.env.AI_FALLBACK_MODEL,
-  AI_PROVIDER === 'openai' ? 'gpt-4o-mini' : ''
-);
-
-// Backward-compatible exports used by existing modules.
-export const hasOpenAiKey = hasAiKey;
-export const openai = aiClient;
-export const OPENAI_MODEL = AI_MODEL;
+export const OPENAI_MODEL = isOllama
+  ? process.env.OLLAMA_MODEL || process.env.OPENAI_MODEL || 'llama3.1'
+  : process.env.OPENAI_MODEL || 'gpt-4o-mini';
+export const OPENAI_FALLBACK_MODEL =
+  (isOllama
+    ? process.env.OLLAMA_FALLBACK_MODEL || process.env.OPENAI_FALLBACK_MODEL
+    : process.env.OPENAI_FALLBACK_MODEL) || OPENAI_MODEL;

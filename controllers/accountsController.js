@@ -4,6 +4,7 @@ import { findTransactionsByUserId } from '../models/transactionsModel.js';
 const getAccount = async (req, res) => {
   try {
     const userId = req.userId;
+    const userEmail = String(req.user?.email || '').toLowerCase();
 
     /* ---------- Account ---------- */
     const account = await accountsModel.findAccountByUserId(userId);
@@ -16,11 +17,21 @@ const getAccount = async (req, res) => {
 
     /* ---------- Transactions ---------- */
     const transactions = await findTransactionsByUserId(userId);
+    const transactionsWithSign = transactions.map((transaction) => {
+      const tx = transaction.toObject();
+      const fromEmail = String(tx.fromEmail || '').toLowerCase();
+      const toEmail = String(tx.toEmail || '').toLowerCase();
+      const sign = fromEmail === userEmail ? '-' : toEmail === userEmail ? '+' : '';
+      return {
+        ...tx,
+        sign
+      };
+    });
 
     /* ---------- Success ---------- */
     return res.status(200).json({
       account,
-      transactions
+      transactions: transactionsWithSign
     });
 
   } catch (err) {

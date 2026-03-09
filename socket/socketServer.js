@@ -1,6 +1,8 @@
 import { Server } from 'socket.io';
 import jwt from 'jsonwebtoken';
 import usersModel from '../models/usersModel.js';
+import accountsModel from '../models/accountsModel.js';
+import { findTransactionsByUserId } from '../models/transactionsModel.js';
 import { JWT_SECRET } from '../middleware/auth.js';
 import { generateAssistantReply } from '../ai/chatAssistant.js';
 
@@ -8,6 +10,47 @@ const CHAT_EVENT = 'chat_message';
 const REPLY_EVENT = 'bot_reply';
 const ERROR_EVENT = 'chat_error';
 const ALLOW_DEBUG_ERRORS = process.env.ASSISTANT_DEBUG_ERRORS === 'true';
+const CALL_INVITE_TTL_MS = 60 * 1000;
+
+const userSockets = new Map();
+const pendingCalls = new Map();
+
+const normalizeEmail = (value) => String(value || '').trim().toLowerCase();
+const sanitizeForRoom = (value) =>
+  value.replace(/[^a-z0-9]/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '');
+const buildRoomName = (emailA, emailB) => {
+  const pair = [normalizeEmail(emailA), normalizeEmail(emailB)].sort();
+  const room = `bank11-${sanitizeForRoom(pair[0])}-${sanitizeForRoom(pair[1])}`;
+  return room.slice(0, 120);
+};
+const emitToUser = (io, email, eventName, payload) => {
+  const normalized = normalizeEmail(email);
+  const sockets = userSockets.get(normalized);
+  if (!sockets || sockets.size === 0) return 0;
+
+  // Prune stale socket ids before emitting so "online" checks stay accurate.
+  const liveSocketIds = [];
+  sockets.forEach((socketId) => {
+    if (io.sockets.sockets.has(socketId)) {
+      liveSocketIds.push(socketId);
+    }
+  });
+
+  if (liveSocketIds.length === 0) {
+    userSockets.delete(normalized);
+    return 0;
+  }
+
+  userSockets.set(normalized, new Set(liveSocketIds));
+  liveSocketIds.forEach((socketId) => {
+    io.to(socketId).emit(eventName, payload);
+  });
+  return liveSocketIds.length;
+};
+const clearPendingCall = (callId) => {
+  if (!callId) return;
+  pendingCalls.delete(callId);
+};
 
 const getOrigins = () => {
   if (process.env.SOCKET_CORS_ORIGINS) {
@@ -56,6 +99,10 @@ export const initSocketServer = (httpServer) => {
 
   io.on('connection', (socket) => {
     let history = [];
+    const normalizedEmail = normalizeEmail(socket.user.email);
+    const userSet = userSockets.get(normalizedEmail) || new Set();
+    userSet.add(socket.id);
+    userSockets.set(normalizedEmail, userSet);
 
     socket.on(CHAT_EVENT, async (payload) => {
       try {
@@ -74,10 +121,22 @@ export const initSocketServer = (httpServer) => {
           return;
         }
 
+        const account = await accountsModel.findAccountByUserId(socket.user.id);
+        const transactions = await findTransactionsByUserId(socket.user.id);
+
+        const userContext = {
+          firstName: socket.user.firstName,
+          email: socket.user.email,
+          accountStatus: account?.status,
+          balance: account?.balance,
+          lastTransactions: transactions?.slice(0, 5)
+        };
+
         const { reply, nextHistory } = await generateAssistantReply({
           userInput: text,
           userId: socket.user.id,
-          history
+          history,
+          userContext
         });
 
         history = nextHistory;
@@ -94,8 +153,176 @@ export const initSocketServer = (httpServer) => {
       }
     });
 
+    socket.on('call_request', async (payload, ack) => {
+      const acknowledge = typeof ack === 'function' ? ack : () => {};
+      try {
+        const toEmail = normalizeEmail(payload?.toEmail);
+        const fromEmail = normalizedEmail;
+
+        if (!toEmail || !toEmail.includes('@')) {
+          acknowledge({ ok: false, message: 'Invalid recipient email' });
+          return;
+        }
+
+        if (toEmail === fromEmail) {
+          acknowledge({ ok: false, message: 'Cannot call your own email' });
+          return;
+        }
+
+        const recipient = await usersModel.findVerifiedUserByEmail(toEmail);
+        if (!recipient) {
+          acknowledge({ ok: false, message: 'Recipient not found or not verified' });
+          return;
+        }
+
+        const callId = `${Date.now()}-${socket.id}-${Math.random().toString(36).slice(2, 8)}`;
+        const roomName = buildRoomName(fromEmail, toEmail);
+        const deliveredTo = emitToUser(io, toEmail, 'call_incoming', {
+          callId,
+          fromEmail,
+          fromName: socket.user.firstName,
+          roomName,
+          createdAt: new Date().toISOString()
+        });
+
+        if (deliveredTo === 0) {
+          acknowledge({ ok: false, message: 'Recipient is offline right now' });
+          return;
+        }
+
+        const callPayload = {
+          callId,
+          roomName,
+          fromEmail,
+          toEmail,
+          createdAt: Date.now(),
+          fromName: socket.user.firstName,
+          status: 'pending'
+        };
+        pendingCalls.set(callId, callPayload);
+
+        acknowledge({
+          ok: true,
+          callId,
+          roomName,
+          toEmail
+        });
+
+        setTimeout(() => {
+          const current = pendingCalls.get(callId);
+          if (!current || current.status !== 'pending') return;
+          pendingCalls.delete(callId);
+          emitToUser(io, fromEmail, 'call_timeout', {
+            callId,
+            toEmail,
+            message: 'Call was not answered'
+          });
+          emitToUser(io, toEmail, 'call_canceled', {
+            callId,
+            fromEmail
+          });
+        }, CALL_INVITE_TTL_MS);
+      } catch {
+        acknowledge({ ok: false, message: 'Could not start the call' });
+      }
+    });
+
+    socket.on('call_accept', (payload, ack) => {
+      const acknowledge = typeof ack === 'function' ? ack : () => {};
+      const callId = String(payload?.callId || '');
+      const call = pendingCalls.get(callId);
+
+      if (!call || call.status !== 'pending') {
+        acknowledge({ ok: false, message: 'Call is no longer available' });
+        return;
+      }
+
+      if (normalizeEmail(call.toEmail) !== normalizedEmail) {
+        acknowledge({ ok: false, message: 'Not authorized for this call' });
+        return;
+      }
+
+      emitToUser(io, call.fromEmail, 'call_accepted', {
+        callId,
+        roomName: call.roomName,
+        peerEmail: call.toEmail
+      });
+      emitToUser(io, call.toEmail, 'call_accepted', {
+        callId,
+        roomName: call.roomName,
+        peerEmail: call.fromEmail
+      });
+
+      acknowledge({
+        ok: true,
+        callId,
+        roomName: call.roomName,
+        peerEmail: call.fromEmail
+      });
+      clearPendingCall(callId);
+    });
+
+    socket.on('call_decline', (payload) => {
+      const callId = String(payload?.callId || '');
+      const call = pendingCalls.get(callId);
+      if (!call || call.status !== 'pending') return;
+      if (normalizeEmail(call.toEmail) !== normalizedEmail) return;
+
+      call.status = 'declined';
+      pendingCalls.set(callId, call);
+
+      emitToUser(io, call.fromEmail, 'call_declined', {
+        callId,
+        byEmail: call.toEmail
+      });
+      emitToUser(io, call.toEmail, 'call_canceled', {
+        callId,
+        fromEmail: call.fromEmail
+      });
+      clearPendingCall(callId);
+    });
+
+    socket.on('call_cancel', (payload) => {
+      const callId = String(payload?.callId || '');
+      const call = pendingCalls.get(callId);
+      if (!call || call.status !== 'pending') return;
+      if (normalizeEmail(call.fromEmail) !== normalizedEmail) return;
+
+      call.status = 'canceled';
+      pendingCalls.set(callId, call);
+      emitToUser(io, call.toEmail, 'call_canceled', {
+        callId,
+        fromEmail: call.fromEmail
+      });
+      clearPendingCall(callId);
+    });
+
     socket.on('disconnect', () => {
       history = [];
+      const sockets = userSockets.get(normalizedEmail);
+      if (sockets) {
+        sockets.delete(socket.id);
+        if (sockets.size === 0) {
+          userSockets.delete(normalizedEmail);
+        } else {
+          userSockets.set(normalizedEmail, sockets);
+        }
+      }
+
+      pendingCalls.forEach((call, callId) => {
+        if (call.status !== 'pending') {
+          clearPendingCall(callId);
+          return;
+        }
+
+        if (normalizeEmail(call.fromEmail) === normalizedEmail) {
+          emitToUser(io, call.toEmail, 'call_canceled', {
+            callId,
+            fromEmail: call.fromEmail
+          });
+          clearPendingCall(callId);
+        }
+      });
     });
   });
 

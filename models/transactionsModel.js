@@ -3,49 +3,65 @@ import { Account } from "../entities/accounts.js";
 import { Transaction } from "../entities/transactions.js";
 import { User } from "../entities/users.js";
 
-export const transferMoney = async ({
+const TX_NOT_SUPPORTED_MESSAGE =
+  "Transaction numbers are only allowed on a replica set member or mongos";
+
+const isTransactionNotSupportedError = (error) =>
+  String(error?.message || "").includes(TX_NOT_SUPPORTED_MESSAGE);
+
+const performTransfer = async ({
   fromAccountId,
   toAccountId,
   amount,
   description,
+  session = null,
 }) => {
-  const session = await mongoose.startSession();
+  const fromAccountQuery = Account.findById(fromAccountId);
+  const toAccountQuery = Account.findById(toAccountId);
 
-  try {
-    session.startTransaction();
+  const fromAccount = session
+    ? await fromAccountQuery.session(session)
+    : await fromAccountQuery;
+  const toAccount = session
+    ? await toAccountQuery.session(session)
+    : await toAccountQuery;
 
-    /* ---- fetch accounts ---- */
-    const fromAccount = await Account.findById(fromAccountId).session(session);
-    const toAccount = await Account.findById(toAccountId).session(session);
+  if (!fromAccount || !toAccount) {
+    throw new Error("Account not found");
+  }
 
-    if (!fromAccount || !toAccount) {
-      throw new Error("Account not found");
-    }
+  if (fromAccount.status !== "ACTIVE") {
+    throw new Error("Source account is not active");
+  }
 
-    if (fromAccount.status !== "ACTIVE") {
-      throw new Error("Source account is not active");
-    }
+  if (fromAccount.balance < amount) {
+    throw new Error("Insufficient funds");
+  }
 
-    if (fromAccount.balance < amount) {
-      throw new Error("Insufficient funds");
-    }
+  const fromUserQuery = User.findById(fromAccount.userId).select("email");
+  const toUserQuery = User.findById(toAccount.userId).select("email");
+  const fromUser = session
+    ? await fromUserQuery.session(session)
+    : await fromUserQuery;
+  const toUser = session ? await toUserQuery.session(session) : await toUserQuery;
 
-    const fromUser = await User.findById(fromAccount.userId).select("email");
-    const toUser = await User.findById(toAccount.userId).select("email");
+  if (!fromUser?.email || !toUser?.email) {
+    throw new Error("User email not found");
+  }
 
-    if (!fromUser?.email || !toUser?.email) {
-      throw new Error("User email not found");
-    }
+  fromAccount.balance -= amount;
+  toAccount.balance += amount;
 
-    /* ---- update balances ---- */
-    fromAccount.balance -= amount;
-    toAccount.balance += amount;
-
+  if (session) {
     await fromAccount.save({ session });
     await toAccount.save({ session });
+  } else {
+    await fromAccount.save();
+    await toAccount.save();
+  }
 
-    /* ---- create transaction ---- */
-    const transactionId = Date.now() + Math.floor(Math.random() * 1000);
+  const transactionId = Date.now() + Math.floor(Math.random() * 1000);
+  if (session) {
     const transaction = await Transaction.create(
       [
         {
@@ -59,14 +75,57 @@ export const transferMoney = async ({
       ],
       { session }
     );
-    await session.commitTransaction();
-    session.endSession();
-
     return transaction[0];
+  }
+
+  return Transaction.create({
+    id: transactionId,
+    fromEmail: fromUser.email,
+    toEmail: toUser.email,
+    amount,
+    status: "COMPLETED",
+    description,
+  });
+};
+
+export const transferMoney = async ({
+  fromAccountId,
+  toAccountId,
+  amount,
+  description,
+}) => {
+  const session = await mongoose.startSession();
+
+  try {
+    session.startTransaction();
+    const transaction = await performTransfer({
+      fromAccountId,
+      toAccountId,
+      amount,
+      description,
+      session,
+    });
+    await session.commitTransaction();
+    return transaction;
   } catch (err) {
-    await session.abortTransaction();
-    session.endSession();
+    try {
+      await session.abortTransaction();
+    } catch {
+      // Ignore abort errors. We fallback below only when transactions are unsupported.
+    }
+
+    if (isTransactionNotSupportedError(err)) {
+      return performTransfer({
+        fromAccountId,
+        toAccountId,
+        amount,
+        description,
+      });
+    }
+
     throw err;
+  } finally {
+    session.endSession();
   }
 };
 

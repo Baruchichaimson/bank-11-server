@@ -1,5 +1,5 @@
 import express from 'express';
-import { AI_MODEL, AI_PROVIDER, hasAiKey } from '../ai/openaiClient.js';
+import { AI_PROVIDER, OPENAI_MODEL, hasOpenAiKey } from '../ai/openaiClient.js';
 
 const router = express.Router();
 
@@ -10,8 +10,8 @@ router.get('/ai', (_, res) => {
     status: 'OK',
     ai: {
       provider: AI_PROVIDER,
-      hasApiKey: hasAiKey,
-      model: AI_MODEL
+      hasApiKey: hasOpenAiKey,
+      model: OPENAI_MODEL
     },
     time: new Date().toISOString()
   });
