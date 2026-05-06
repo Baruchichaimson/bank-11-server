@@ -5,6 +5,10 @@ const getAccount = async (req, res) => {
   try {
     const userId = req.userId;
     const userEmail = String(req.user?.email || '').toLowerCase();
+    const parsedLimit = Number.parseInt(req.query.transactionsLimit, 10);
+    const parsedOffset = Number.parseInt(req.query.transactionsOffset, 10);
+    const transactionsLimit = Number.isInteger(parsedLimit) && parsedLimit > 0 ? parsedLimit : 5;
+    const transactionsOffset = Number.isInteger(parsedOffset) && parsedOffset >= 0 ? parsedOffset : 0;
 
     /* ---------- Account ---------- */
     const account = await accountsModel.findAccountByUserId(userId);
@@ -16,7 +20,10 @@ const getAccount = async (req, res) => {
     }
 
     /* ---------- Transactions ---------- */
-    const transactions = await findTransactionsByUserId(userId);
+    const transactions = await findTransactionsByUserId(userId, {
+      limit: transactionsLimit,
+      offset: transactionsOffset
+    });
     const transactionsWithSign = transactions.map((transaction) => {
       const tx = transaction.toObject();
       const fromEmail = String(tx.fromEmail || '').toLowerCase();
@@ -31,7 +38,11 @@ const getAccount = async (req, res) => {
     /* ---------- Success ---------- */
     return res.status(200).json({
       account,
-      transactions: transactionsWithSign
+      transactions: transactionsWithSign,
+      pagination: {
+        limit: transactionsLimit,
+        offset: transactionsOffset
+      }
     });
 
   } catch (err) {

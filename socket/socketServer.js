@@ -15,6 +15,7 @@ const CALL_INVITE_TTL_MS = 60 * 1000;
 
 const userSockets = new Map();
 const pendingCalls = new Map();
+const AUTH_COOKIE_NAME = 'access_token';
 
 const normalizeEmail = (value) => String(value || '').trim().toLowerCase();
 const sanitizeForRoom = (value) =>
@@ -52,6 +53,20 @@ const clearPendingCall = (callId) => {
   if (!callId) return;
   pendingCalls.delete(callId);
 };
+const readTokenFromCookieHeader = (cookieHeader) => {
+  const raw = String(cookieHeader || '');
+  if (!raw) return null;
+  const parts = raw.split(';');
+
+  for (const part of parts) {
+    const [key, ...rest] = part.trim().split('=');
+    if (key === AUTH_COOKIE_NAME) {
+      return decodeURIComponent(rest.join('='));
+    }
+  }
+
+  return null;
+};
 
 export const initSocketServer = (httpServer) => {
   const io = new Server(httpServer, {
@@ -63,7 +78,9 @@ export const initSocketServer = (httpServer) => {
 
   io.use(async (socket, next) => {
     try {
-      const token = socket.handshake?.auth?.token;
+      const token =
+        socket.handshake?.auth?.token ||
+        readTokenFromCookieHeader(socket.handshake?.headers?.cookie);
       if (!token) {
         return next(new Error('Unauthorized'));
       }

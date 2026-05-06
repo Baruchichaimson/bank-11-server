@@ -30,6 +30,10 @@ const performTransfer = async ({
     throw new Error("Account not found");
   }
 
+  if (String(receiverUser.email) === String(senderUserId.email)) {
+    throw new Error("receiver and sender are equal");
+  }
+
   if (fromAccount.status !== "ACTIVE") {
     throw new Error("Source account is not active");
   }
@@ -129,15 +133,28 @@ export const transferMoney = async ({
   }
 };
 
-export const findTransactionsByUserId = async (userId) => {
+export const findTransactionsByUserId = async (
+  userId,
+  { limit, offset } = {}
+) => {
   const user = await User.findById(userId).select("email");
   if (!user?.email) {
     return [];
   }
 
-  return Transaction.find({
+  const query = Transaction.find({
     $or: [{ fromEmail: user.email }, { toEmail: user.email }]
   }).sort({ createdAt: -1 });
+
+  if (Number.isInteger(offset) && offset > 0) {
+    query.skip(offset);
+  }
+
+  if (Number.isInteger(limit) && limit > 0) {
+    query.limit(limit);
+  }
+
+  return query;
 };
 
 export const findTransactionById = async (transactionId) => {

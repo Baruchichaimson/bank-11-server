@@ -20,6 +20,10 @@ export const authenticateToken = (req, res, next) => {
     }
   }
 
+  if (!token) {
+    token = req.cookies?.access_token || null;
+  }
+
   /* ---------- No token ---------- */
   if (!token) {
     return res.status(401).json({

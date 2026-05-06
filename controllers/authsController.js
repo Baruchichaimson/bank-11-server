@@ -9,6 +9,20 @@ import { sendVerificationEmail } from '../utils/email.js';
 import { sendPasswordResetEmail } from '../utils/email.js';
 import { JWT_SECRET } from '../middleware/auth.js';
 
+const AUTH_COOKIE_NAME = 'access_token';
+const AUTH_COOKIE_MAX_AGE_MS = 60 * 60 * 1000;
+
+const getAuthCookieOptions = () => {
+  const isProduction = process.env.NODE_ENV === 'production';
+  return {
+    httpOnly: true,
+    secure: isProduction,
+    sameSite: isProduction ? 'none' : 'lax',
+    maxAge: AUTH_COOKIE_MAX_AGE_MS,
+    path: '/'
+  };
+};
+
 /* ================= REGISTER ================= */
 const signup = async (req, res) => {
   try {
@@ -46,7 +60,6 @@ const signup = async (req, res) => {
       verificationExpires: Date.now() + 24 * 60 * 60 * 1000
     });
 
-    /* 🔐 פעולות משניות – לא מפילות signup */
 try {
   await accountsModel.createAccount(user._id);
 } catch (accountErr) {
@@ -149,13 +162,13 @@ const verify = async (req, res) => {
       );
     }
 
-    // ✅ verify user
+    // verify user
     user.isVerified = true;
     user.verificationToken = null;
     user.verificationExpires = null;
     await user.save();
 
-    // ✅ activate account if exists
+    // activate account if exists
     const account = await accountsModel.findAccountByUserId(user._id);
     if (account) {
       await accountsModel.updateAccountStatus(account._id, 'ACTIVE');
@@ -223,6 +236,7 @@ const login = async (req, res) => {
       { expiresIn: '1h' }
     );
 
+    res.cookie(AUTH_COOKIE_NAME, accessToken, getAuthCookieOptions());
     return res.status(200).json({ accessToken });
 
   } 
@@ -237,6 +251,12 @@ const login = async (req, res) => {
 /* ================= LOGOUT ================= */
 
 const logout = (req, res) => {
+  res.clearCookie(AUTH_COOKIE_NAME, {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === 'production',
+    sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'lax',
+    path: '/'
+  });
   return res.status(200).json({
     message: 'Logged out successfully'
   });
