@@ -30,7 +30,7 @@ const performTransfer = async ({
     throw new Error("Account not found");
   }
 
-  if (String(receiverUser.email) === String(senderUserId.email)) {
+  if (String(fromAccount._id) === String(toAccount._id)) {
     throw new Error("receiver and sender are equal");
   }
 
