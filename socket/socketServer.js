@@ -8,6 +8,7 @@ import { generateAssistantReply } from '../ai/chatAssistant.js';
 import { getAllowedOrigins } from '../config/corsOrigins.js';
 
 const CHAT_EVENT = 'chat_message';
+const CANCEL_CHAT_EVENT = 'cancel_chat_message';
 const REPLY_EVENT = 'bot_reply';
 const ERROR_EVENT = 'chat_error';
 const ALLOW_DEBUG_ERRORS = process.env.ASSISTANT_DEBUG_ERRORS === 'true';
@@ -105,25 +106,34 @@ export const initSocketServer = (httpServer) => {
 
   io.on('connection', (socket) => {
     let history = [];
+    const activeAssistantRequests = new Map();
     const normalizedEmail = normalizeEmail(socket.user.email);
     const userSet = userSockets.get(normalizedEmail) || new Set();
     userSet.add(socket.id);
     userSockets.set(normalizedEmail, userSet);
 
     socket.on(CHAT_EVENT, async (payload) => {
+      const requestId = String(payload?.requestId || Date.now());
+      const controller = new AbortController();
+      activeAssistantRequests.set(requestId, controller);
+
       try {
         const text = String(payload?.message || '').trim();
         if (!text) {
           socket.emit(ERROR_EVENT, {
+            requestId,
             message: 'Message is required'
           });
+          activeAssistantRequests.delete(requestId);
           return;
         }
 
         if (text.length > 2000) {
           socket.emit(ERROR_EVENT, {
+            requestId,
             message: 'Message is too long'
           });
+          activeAssistantRequests.delete(requestId);
           return;
         }
 
@@ -142,21 +152,43 @@ export const initSocketServer = (httpServer) => {
           userInput: text,
           userId: socket.user.id,
           history,
-          userContext
+          userContext,
+          abortSignal: controller.signal
         });
 
+        if (controller.signal.aborted) {
+          activeAssistantRequests.delete(requestId);
+          return;
+        }
+
         history = nextHistory;
-        socket.emit(REPLY_EVENT, { message: reply, action: action || null });
+        socket.emit(REPLY_EVENT, { requestId, message: reply, action: action || null });
+        activeAssistantRequests.delete(requestId);
       } catch (err) {
         const details = String(err?.message || err);
+        if (controller.signal.aborted || details.toLowerCase().includes('abort')) {
+          activeAssistantRequests.delete(requestId);
+          return;
+        }
         socket.emit(ERROR_EVENT, {
+          requestId,
           message:
             process.env.NODE_ENV === 'production' && !ALLOW_DEBUG_ERRORS
               ? 'Assistant is temporarily unavailable'
               : `Assistant error: ${details}`
         });
         console.error('Socket assistant error:', details);
+        activeAssistantRequests.delete(requestId);
       }
+    });
+
+    socket.on(CANCEL_CHAT_EVENT, (payload) => {
+      const requestId = String(payload?.requestId || '');
+      if (!requestId) return;
+      const controller = activeAssistantRequests.get(requestId);
+      if (!controller) return;
+      controller.abort();
+      activeAssistantRequests.delete(requestId);
     });
 
     socket.on('call_request', async (payload, ack) => {
@@ -305,6 +337,13 @@ export const initSocketServer = (httpServer) => {
 
     socket.on('disconnect', () => {
       history = [];
+      activeAssistantRequests.forEach((controller) => {
+        try {
+          controller.abort();
+        } catch {}
+      });
+      activeAssistantRequests.clear();
+
       const sockets = userSockets.get(normalizedEmail);
       if (sockets) {
         sockets.delete(socket.id);

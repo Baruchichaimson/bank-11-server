@@ -357,10 +357,14 @@ const parseToolArgs = (raw) => {
 };
 
 const createChatCompletion = async (payload) => {
-  return openai.chat.completions.create({
-    model: OPENAI_MODEL,
-    ...payload
-  });
+  const { abortSignal, ...rest } = payload || {};
+  return openai.chat.completions.create(
+    {
+      model: OPENAI_MODEL,
+      ...rest
+    },
+    abortSignal ? { signal: abortSignal } : undefined
+  );
 };
 
 const isVideoCallIntent = (text) => {
@@ -655,7 +659,8 @@ const detectLanguage = (text) => {
 export const generateAssistantReply = async ({
   userInput,
   userId,
-  history = []
+  history = [],
+  abortSignal
 }) => {
 
   const trimmed = String(userInput || '').trim();
@@ -768,7 +773,8 @@ export const generateAssistantReply = async ({
       temperature: 0,
       messages: detectionMessages,
       tools: bankTools,
-      tool_choice: 'auto'
+      tool_choice: 'auto',
+      abortSignal
     });
 
     const firstMessage = first.choices?.[0]?.message;
