@@ -271,17 +271,23 @@ const forgotPassword = async (req, res) => {
       return res.status(400).json({ message: 'Email is required' });
     }
 
-    const user = await usersModel.findUserByEmail(email);
+    const normalizedEmail = String(email).toLowerCase().trim();
+    const user = await usersModel.findUserByEmail(normalizedEmail);
     if (!user) {
       return res.status(404).json({ message: 'User not registered' });
     }
 
-    const resetToken = randomUUID();
-    user.resetPasswordToken = resetToken;
-    user.resetPasswordExpires = Date.now() + 60 * 60 * 1000;
-    await user.save();
+    const resetToken = jwt.sign(
+      {
+        userId: user._id,
+        email: user.email,
+        type: 'password_reset'
+      },
+      JWT_SECRET,
+      { expiresIn: '1h' }
+    );
 
-    await sendPasswordResetEmail(email, resetToken);
+    await sendPasswordResetEmail(normalizedEmail, resetToken);
 
     return res.status(200).json({
       message: 'Password reset email sent'
@@ -305,18 +311,23 @@ const resetPassword = async (req, res) => {
       return res.status(400).json({ message: 'Passwords do not match' });
     }
 
-    const user = await usersModel.findUserByResetToken(token);
+    let payload;
+    try {
+      payload = jwt.verify(token, JWT_SECRET);
+    } catch (jwtErr) {
+      return res.status(400).json({ message: 'Invalid or expired token' });
+    }
+
+    if (payload?.type !== 'password_reset' || !payload?.userId) {
+      return res.status(400).json({ message: 'Invalid token payload' });
+    }
+
+    const user = await usersModel.findUserById(payload.userId);
     if (!user) {
       return res.status(404).json({ message: 'Invalid or expired token' });
     }
 
-    if (Date.now() > user.resetPasswordExpires) {
-      return res.status(400).json({ message: 'Token expired' });
-    }
-
     user.password = await bcrypt.hash(password, 10);
-    user.resetPasswordToken = null;
-    user.resetPasswordExpires = null;
     await user.save();
 
     return res.status(200).json({
