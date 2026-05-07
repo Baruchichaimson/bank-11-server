@@ -15,6 +15,49 @@ const toIso = (value) => {
   return Number.isNaN(date.getTime()) ? null : date.toISOString();
 };
 
+const startOfDay = (d) => new Date(d.getFullYear(), d.getMonth(), d.getDate());
+const endOfDay = (d) => new Date(d.getFullYear(), d.getMonth(), d.getDate(), 23, 59, 59, 999);
+
+const parseRelativeDateToken = (value, now) => {
+  const raw = String(value || '').trim().toLowerCase();
+  if (!raw) return null;
+
+  if (raw === 'now' || raw === 'today' || raw === 'היום') return now;
+  if (raw === 'yesterday' || raw === 'אתמול') {
+    return new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1);
+  }
+
+  if (
+    raw === 'this month' ||
+    raw === 'current month' ||
+    raw === 'החודש' ||
+    raw === 'בחודש הזה'
+  ) {
+    return new Date(now.getFullYear(), now.getMonth(), 1);
+  }
+
+  if (
+    raw === 'last month' ||
+    raw === 'בחודש האחרון' ||
+    raw === 'חודש אחרון'
+  ) {
+    return new Date(now.getFullYear(), now.getMonth() - 1, 1);
+  }
+
+  if (
+    raw === 'last 30 days' ||
+    raw === '30 days' ||
+    raw === '30d' ||
+    raw === '30 יום אחרונים'
+  ) {
+    return new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+  }
+
+  const asDate = new Date(raw);
+  if (!Number.isNaN(asDate.getTime())) return asDate;
+  return null;
+};
+
 /*
   תיקון חשוב:
   - אם from/to ריקים או ""
@@ -27,18 +70,36 @@ const toDateRange = (from, to) => {
   const hasFrom = typeof from === 'string' && from.trim() !== '';
   const hasTo = typeof to === 'string' && to.trim() !== '';
 
-  const start = hasFrom
-    ? new Date(from)
+  let start = hasFrom
+    ? parseRelativeDateToken(from, now)
     : new Date(now.getFullYear(), now.getMonth(), 1);
 
-  const end = hasTo
-    ? new Date(to)
+  let end = hasTo
+    ? parseRelativeDateToken(to, now)
     : now;
 
+  if (!hasTo && hasFrom) {
+    const fromToken = String(from || '').trim().toLowerCase();
+    if (
+      fromToken === 'last month' ||
+      fromToken === 'בחודש האחרון' ||
+      fromToken === 'חודש אחרון'
+    ) {
+      end = new Date(now.getFullYear(), now.getMonth(), 0, 23, 59, 59, 999);
+    }
+  }
+
   if (
-    (hasFrom && Number.isNaN(start.getTime())) ||
-    (hasTo && Number.isNaN(end.getTime()))
+    (hasFrom && (!start || Number.isNaN(start.getTime()))) ||
+    (hasTo && (!end || Number.isNaN(end.getTime())))
   ) {
+    return null;
+  }
+
+  start = startOfDay(start);
+  end = endOfDay(end);
+
+  if (start > end) {
     return null;
   }
 
@@ -99,6 +160,21 @@ export const bankTools = [
           recipientName: { type: 'string' }
         },
         required: ['recipientName']
+      }
+    }
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'get_recent_transfers',
+      description: 'Get recent transfers in optional date range for authenticated user',
+      parameters: {
+        type: 'object',
+        properties: {
+          limit: { type: 'number' },
+          from: { type: 'string' },
+          to: { type: 'string' }
+        }
       }
     }
   }
@@ -238,6 +314,44 @@ export const executeBankTool = async ({ name, args = {}, userId }) => {
       status: tx.status,
       description: tx.description || null,
       createdAt: toIso(tx.createdAt)
+    };
+  }
+
+  /* ---------- Recent Transfers ---------- */
+
+  if (name === 'get_recent_transfers') {
+    const range = toDateRange(safeArgs.from, safeArgs.to);
+    if (!range) {
+      return { found: false, message: 'Invalid date range format' };
+    }
+
+    const requestedLimit = Number(safeArgs.limit);
+    const limit = Number.isFinite(requestedLimit)
+      ? Math.min(Math.max(Math.floor(requestedLimit), 1), 20)
+      : 3;
+
+    const transactions = await findTransactionsByUserId(userId);
+    const filtered = (transactions || []).filter((tx) => {
+      const createdAt = new Date(tx.createdAt);
+      return createdAt >= range.start && createdAt <= range.end;
+    });
+
+    const items = filtered.slice(0, limit).map((tx) => ({
+      id: tx.id,
+      fromEmail: tx.fromEmail,
+      toEmail: tx.toEmail,
+      amount: Number(tx.amount) || 0,
+      status: tx.status,
+      description: tx.description || null,
+      createdAt: toIso(tx.createdAt)
+    }));
+
+    return {
+      found: true,
+      count: items.length,
+      from: range.start.toISOString(),
+      to: range.end.toISOString(),
+      items
     };
   }
 

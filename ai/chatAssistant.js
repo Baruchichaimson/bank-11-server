@@ -363,6 +363,19 @@ const createChatCompletion = async (payload) => {
   });
 };
 
+const isVideoCallIntent = (text) => {
+  const normalized = String(text || '').toLowerCase();
+  return (
+    normalized.includes('video call') ||
+    normalized.includes('start call') ||
+    normalized.includes('make a call') ||
+    normalized.includes('שיחת וידיאו') ||
+    normalized.includes('שיחת וידאו') ||
+    normalized.includes('שיחת וידיו') ||
+    normalized.includes('שיחת וידאו')
+  );
+};
+
 /* =================================
    Backend Formatting (Fast & Safe)
 ================================= */
@@ -391,6 +404,20 @@ const formatFinancialResponse = (toolName, result, userLanguage) => {
     if (toolName === 'get_last_transfer') {
       return `ההעברה האחרונה הייתה ${result.amount} מ־${result.fromEmail} ל־${result.toEmail} בתאריך ${result.createdAt}.`;
     }
+
+    if (toolName === 'get_recent_transfers') {
+      if (!result.items?.length) {
+        return 'לא נמצאו העברות בטווח התאריכים שביקשת.';
+      }
+
+      const rows = result.items
+        .map((tx, index) =>
+          `${index + 1}. ${tx.amount} ILS | מ־${tx.fromEmail} אל ${tx.toEmail} | ${tx.createdAt}`
+        )
+        .join('\n');
+
+      return `הנה ${result.items.length} ההעברות האחרונות בטווח שביקשת:\n${rows}`;
+    }
   }
 
   // Default English
@@ -408,6 +435,20 @@ const formatFinancialResponse = (toolName, result, userLanguage) => {
 
   if (toolName === 'get_last_transfer') {
     return `Your latest transfer was ${result.amount} from ${result.fromEmail} to ${result.toEmail} on ${result.createdAt}.`;
+  }
+
+  if (toolName === 'get_recent_transfers') {
+    if (!result.items?.length) {
+      return 'No transfers were found in the requested date range.';
+    }
+
+    const rows = result.items
+      .map((tx, index) =>
+        `${index + 1}. ${tx.amount} ILS | from ${tx.fromEmail} to ${tx.toEmail} | ${tx.createdAt}`
+      )
+      .join('\n');
+
+    return `Here are the latest ${result.items.length} transfers in your requested range:\n${rows}`;
   }
 
   return 'Data retrieved successfully.';
@@ -440,14 +481,33 @@ export const generateAssistantReply = async ({
       reply: userLanguage === 'he'
         ? 'אנא כתוב הודעה כדי שאוכל לעזור.'
         : 'Please type a message so I can help.',
-      nextHistory: history
+      nextHistory: history,
+      action: null
     };
   }
 
   if (!hasOpenAiKey || !openai) {
     return {
       reply: 'AI service is unavailable.',
-      nextHistory: history
+      nextHistory: history,
+      action: null
+    };
+  }
+
+  if (isVideoCallIntent(trimmed)) {
+    const reply =
+      userLanguage === 'he'
+        ? 'כן. פתחתי לך את חלון שיחת הווידאו. הזן את המייל של המשתמש שתרצה להתקשר אליו.'
+        : 'Yes. I opened the video call window for you. Enter the user email to start the call.';
+
+    return {
+      reply,
+      nextHistory: [
+        ...history.slice(-MAX_HISTORY),
+        { role: 'user', content: trimmed },
+        { role: 'assistant', content: reply }
+      ].slice(-MAX_HISTORY),
+      action: 'open_video_call'
     };
   }
 
@@ -499,7 +559,8 @@ export const generateAssistantReply = async ({
           ...shortHistory,
           { role: 'user', content: trimmed },
           { role: 'assistant', content: reply }
-        ].slice(-MAX_HISTORY)
+        ].slice(-MAX_HISTORY),
+        action: null
       };
     }
 
@@ -519,7 +580,8 @@ export const generateAssistantReply = async ({
         ...shortHistory,
         { role: 'user', content: trimmed },
         { role: 'assistant', content: normalReply }
-      ].slice(-MAX_HISTORY)
+      ].slice(-MAX_HISTORY),
+      action: null
     };
 
   } catch (err) {

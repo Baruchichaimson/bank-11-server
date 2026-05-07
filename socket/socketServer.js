@@ -138,7 +138,7 @@ export const initSocketServer = (httpServer) => {
           lastTransactions: transactions?.slice(0, 5)
         };
 
-        const { reply, nextHistory } = await generateAssistantReply({
+        const { reply, nextHistory, action } = await generateAssistantReply({
           userInput: text,
           userId: socket.user.id,
           history,
@@ -146,7 +146,7 @@ export const initSocketServer = (httpServer) => {
         });
 
         history = nextHistory;
-        socket.emit(REPLY_EVENT, { message: reply });
+        socket.emit(REPLY_EVENT, { message: reply, action: action || null });
       } catch (err) {
         const details = String(err?.message || err);
         socket.emit(ERROR_EVENT, {
