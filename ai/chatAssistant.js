@@ -376,6 +376,65 @@ const isVideoCallIntent = (text) => {
   );
 };
 
+const getRequestedTransferCount = (text) => {
+  const value = String(text || '').toLowerCase();
+  const countMatch = value.match(/\b(\d{1,2})\b/);
+  const requested = countMatch ? Number(countMatch[1]) : null;
+  if (!requested || requested < 1) return null;
+  return Math.min(requested, 20);
+};
+
+const isRecentTransfersIntent = (text) => {
+  const value = String(text || '').toLowerCase();
+  const hasTransferWord =
+    value.includes('transfer') ||
+    value.includes('transfers') ||
+    value.includes('transaction') ||
+    value.includes('transactions') ||
+    value.includes('העברה') ||
+    value.includes('העברות') ||
+    value.includes('טרנזקציה') ||
+    value.includes('טרנזקציות');
+
+  if (!hasTransferWord) return false;
+
+  return (
+    value.includes('last') ||
+    value.includes('recent') ||
+    value.includes('latest') ||
+    value.includes('אחרונ') ||
+    value.includes('recent')
+  );
+};
+
+const inferDateRangeFromText = (text) => {
+  const value = String(text || '').toLowerCase();
+  if (
+    value.includes('last month') ||
+    value.includes('בחודש האחרון') ||
+    value.includes('חודש אחרון')
+  ) {
+    return { from: 'last month' };
+  }
+
+  if (
+    value.includes('last 30 day') ||
+    value.includes('30 days') ||
+    value.includes('30 יום')
+  ) {
+    return { from: 'last 30 days' };
+  }
+
+  return {};
+};
+
+const formatDateForUser = (isoString, userLanguage) => {
+  if (!isoString) return '';
+  const d = new Date(isoString);
+  if (Number.isNaN(d.getTime())) return isoString;
+  return d.toLocaleString(userLanguage === 'he' ? 'he-IL' : 'en-US');
+};
+
 /* =================================
    Backend Formatting (Fast & Safe)
 ================================= */
@@ -383,6 +442,11 @@ const isVideoCallIntent = (text) => {
 const formatFinancialResponse = (toolName, result, userLanguage) => {
 
   if (!result || result.found === false) {
+    if (String(result?.message || '').toLowerCase().includes('invalid date range')) {
+      return userLanguage === 'he'
+        ? 'לא הצלחתי להבין את טווח התאריכים. נסה למשל: "3 העברות אחרונות בחודש האחרון".'
+        : 'I could not parse the date range. Try: "3 latest transfers in the last month".';
+    }
     return result?.message || 'Unable to retrieve data.';
   }
 
@@ -402,7 +466,7 @@ const formatFinancialResponse = (toolName, result, userLanguage) => {
     }
 
     if (toolName === 'get_last_transfer') {
-      return `ההעברה האחרונה הייתה ${result.amount} מ־${result.fromEmail} ל־${result.toEmail} בתאריך ${result.createdAt}.`;
+      return `ההעברה האחרונה הייתה ${result.amount} ILS\nשולח: ${result.fromEmail}\nמקבל: ${result.toEmail}\nתאריך: ${formatDateForUser(result.createdAt, userLanguage)}.`;
     }
 
     if (toolName === 'get_recent_transfers') {
@@ -412,7 +476,7 @@ const formatFinancialResponse = (toolName, result, userLanguage) => {
 
       const rows = result.items
         .map((tx, index) =>
-          `${index + 1}. ${tx.amount} ILS | מ־${tx.fromEmail} אל ${tx.toEmail} | ${tx.createdAt}`
+          `${index + 1}. סכום: ${tx.amount} ILS\nשולח: ${tx.fromEmail}\nמקבל: ${tx.toEmail}\nתאריך: ${formatDateForUser(tx.createdAt, userLanguage)}`
         )
         .join('\n');
 
@@ -434,7 +498,7 @@ const formatFinancialResponse = (toolName, result, userLanguage) => {
   }
 
   if (toolName === 'get_last_transfer') {
-    return `Your latest transfer was ${result.amount} from ${result.fromEmail} to ${result.toEmail} on ${result.createdAt}.`;
+    return `Your latest transfer was ${result.amount} ILS\nFrom: ${result.fromEmail}\nTo: ${result.toEmail}\nDate: ${formatDateForUser(result.createdAt, userLanguage)}.`;
   }
 
   if (toolName === 'get_recent_transfers') {
@@ -444,7 +508,7 @@ const formatFinancialResponse = (toolName, result, userLanguage) => {
 
     const rows = result.items
       .map((tx, index) =>
-        `${index + 1}. ${tx.amount} ILS | from ${tx.fromEmail} to ${tx.toEmail} | ${tx.createdAt}`
+        `${index + 1}. Amount: ${tx.amount} ILS\nFrom: ${tx.fromEmail}\nTo: ${tx.toEmail}\nDate: ${formatDateForUser(tx.createdAt, userLanguage)}`
       )
       .join('\n');
 
@@ -508,6 +572,30 @@ export const generateAssistantReply = async ({
         { role: 'assistant', content: reply }
       ].slice(-MAX_HISTORY),
       action: 'open_video_call'
+    };
+  }
+
+  if (isRecentTransfersIntent(trimmed)) {
+    const inferredLimit = getRequestedTransferCount(trimmed) || 3;
+    const inferredRange = inferDateRangeFromText(trimmed);
+    const result = await executeBankTool({
+      name: 'get_recent_transfers',
+      args: {
+        limit: inferredLimit,
+        ...inferredRange
+      },
+      userId
+    });
+
+    const reply = formatFinancialResponse('get_recent_transfers', result, userLanguage);
+    return {
+      reply,
+      nextHistory: [
+        ...history.slice(-MAX_HISTORY),
+        { role: 'user', content: trimmed },
+        { role: 'assistant', content: reply }
+      ].slice(-MAX_HISTORY),
+      action: null
     };
   }
 
