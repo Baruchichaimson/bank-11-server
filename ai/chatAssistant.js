@@ -387,7 +387,12 @@ const isMoneyTransferIntent = (text) => {
     value.includes('להעביר') ||
     value.includes('תעביר') ||
     value.includes('שלח כסף') ||
-    value.includes('לשלוח כסף');
+    value.includes('לשלוח כסף') ||
+    value.includes('איך שולחים כסף') ||
+    value.includes('איך אני שולח כסף') ||
+    value.includes('איך שולחת כסף') ||
+    value.includes('איך שולחים') ||
+    value.includes('שליחת כסף');
 
   const isHistoryQuestion =
     value.includes('last') ||
@@ -398,6 +403,53 @@ const isMoneyTransferIntent = (text) => {
     value.includes('היסטור');
 
   return asksToTransfer && !isHistoryQuestion;
+};
+
+const hasTransferKeyword = (text) => {
+  const value = String(text || '').toLowerCase();
+  return (
+    value.includes('transfer') ||
+    value.includes('money') ||
+    value.includes('העברה') ||
+    value.includes('להעביר') ||
+    value.includes('כסף')
+  );
+};
+
+const isTransferHowIntent = (text, history = []) => {
+  const value = String(text || '').toLowerCase().trim();
+  const asksHow =
+    value.includes('how to') ||
+    value.includes('how do i') ||
+    value.includes('how can i send money') ||
+    value.includes('איך מבצעים') ||
+    value.includes('איך לבצע') ||
+    value.includes('איך ניתן לבצע') ||
+    value.includes('איך שולחים כסף') ||
+    value.includes('איך אני שולח כסף') ||
+    value.includes('איך שולחים') ||
+    value === 'איך מבצעים?' ||
+    value === 'איך מבצעים' ||
+    value === 'איך שולחים?' ||
+    value === 'איך שולחים';
+
+  if (!asksHow) return false;
+  if (hasTransferKeyword(value)) return true;
+
+  // Support short follow-up questions like "איך מבצעים?" after transfer-related context.
+  const recentUserTexts = history
+    .filter((item) => item?.role === 'user')
+    .slice(-3)
+    .map((item) => item?.content || '');
+
+  return recentUserTexts.some(hasTransferKeyword);
+};
+
+const sanitizeAssistantText = (text) => {
+  return String(text || '')
+    .replace(/<function[\s\S]*$/gi, '')
+    .replace(/<\/?function[^>]*>/gi, '')
+    .trim();
 };
 
 const getRequestedTransferCount = (text) => {
@@ -421,13 +473,41 @@ const isRecentTransfersIntent = (text) => {
     value.includes('טרנזקציות');
 
   if (!hasTransferWord) return false;
+  const isCountQuestion =
+    value.includes('כמה ') ||
+    value.startsWith('כמה') ||
+    value.includes('how many');
+
+  const asksForCountedList = /\b\d{1,2}\b/.test(value) && (
+    value.includes('מה הם') ||
+    value.includes('תציג') ||
+    value.includes('show') ||
+    value.includes('list') ||
+    value.includes('give me')
+  );
+
+  const asksForMonthRange =
+    value.includes('בחודש הנוכחי') ||
+    value.includes('חודש נוכחי') ||
+    value.includes('בחודש הזה') ||
+    value.includes('החודש') ||
+    value.includes('בחודש הקודם') ||
+    value.includes('בחודש קודם') ||
+    value.includes('חודש קודם') ||
+    value.includes('last month') ||
+    value.includes('current month') ||
+    value.includes('this month');
 
   return (
+    !isCountQuestion && (
+    asksForCountedList ||
+    asksForMonthRange ||
     value.includes('last') ||
     value.includes('recent') ||
     value.includes('latest') ||
     value.includes('אחרונ') ||
     value.includes('recent')
+    )
   );
 };
 
@@ -443,6 +523,17 @@ const inferDateRangeFromText = (text) => {
     value.includes('previous month')
   ) {
     return { from: 'last month' };
+  }
+
+  if (
+    value.includes('current month') ||
+    value.includes('this month') ||
+    value.includes('בחודש הנוכחי') ||
+    value.includes('חודש נוכחי') ||
+    value.includes('החודש') ||
+    value.includes('בחודש הזה')
+  ) {
+    return { from: 'this month' };
   }
 
   if (
@@ -503,10 +594,11 @@ const formatFinancialResponse = (toolName, result, userLanguage) => {
       }
 
       const rows = result.items
-        .map((tx, index) =>
-          `${index + 1}) סכום: ${tx.amount} ILS\nשולח: ${tx.fromEmail}\nמקבל: ${tx.toEmail}\nתאריך: ${formatDateForUser(tx.createdAt, userLanguage)}`
+        .map(
+          (tx, index) =>
+            `העברה ${index + 1}\n--------------------\nסכום: ${tx.amount} ILS\nשולח: ${tx.fromEmail}\nמקבל: ${tx.toEmail}\nתאריך: ${formatDateForUser(tx.createdAt, userLanguage)}`
         )
-        .join('\n\n');
+        .join('\n\n\n');
 
       return `מצאתי עבורך ${result.items.length} העברות אחרונות בטווח שביקשת:\n\n${rows}`;
     }
@@ -535,10 +627,11 @@ const formatFinancialResponse = (toolName, result, userLanguage) => {
     }
 
     const rows = result.items
-      .map((tx, index) =>
-        `${index + 1}) Amount: ${tx.amount} ILS\nFrom: ${tx.fromEmail}\nTo: ${tx.toEmail}\nDate: ${formatDateForUser(tx.createdAt, userLanguage)}`
+      .map(
+        (tx, index) =>
+          `Transfer ${index + 1}\n--------------------\nAmount: ${tx.amount} ILS\nFrom: ${tx.fromEmail}\nTo: ${tx.toEmail}\nDate: ${formatDateForUser(tx.createdAt, userLanguage)}`
       )
-      .join('\n\n');
+      .join('\n\n\n');
 
     return `I found ${result.items.length} recent transfers in your requested range:\n\n${rows}`;
   }
@@ -600,6 +693,23 @@ export const generateAssistantReply = async ({
         { role: 'assistant', content: reply }
       ].slice(-MAX_HISTORY),
       action: 'open_video_call'
+    };
+  }
+
+  if (isTransferHowIntent(trimmed, history)) {
+    const reply =
+      userLanguage === 'he'
+        ? 'כדי לבצע העברה אני פותח לך עכשיו את מסך ההעברה. שם ממלאים מייל יעד, סכום ותיאור (אופציונלי), ולוחצים Send.'
+        : 'To make a transfer, I will open the transfer screen now. Fill recipient email, amount, optional description, then press Send.';
+
+    return {
+      reply,
+      nextHistory: [
+        ...history.slice(-MAX_HISTORY),
+        { role: 'user', content: trimmed },
+        { role: 'assistant', content: reply }
+      ].slice(-MAX_HISTORY),
+      action: 'open_money_transfer'
     };
   }
 
@@ -702,7 +812,7 @@ export const generateAssistantReply = async ({
     ========================== */
 
     const normalReply =
-      firstMessage?.content ||
+      sanitizeAssistantText(firstMessage?.content) ||
       (userLanguage === 'he'
         ? 'אני לא יכול לסייע בבקשה הזו.'
         : 'I cannot assist with that request.');

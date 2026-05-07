@@ -31,7 +31,9 @@ const parseRelativeDateToken = (value, now) => {
     raw === 'this month' ||
     raw === 'current month' ||
     raw === 'החודש' ||
-    raw === 'בחודש הזה'
+    raw === 'בחודש הזה' ||
+    raw === 'בחודש הנוכחי' ||
+    raw === 'חודש נוכחי'
   ) {
     return new Date(now.getFullYear(), now.getMonth(), 1);
   }
