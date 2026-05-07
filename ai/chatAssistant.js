@@ -376,6 +376,30 @@ const isVideoCallIntent = (text) => {
   );
 };
 
+const isMoneyTransferIntent = (text) => {
+  const value = String(text || '').toLowerCase();
+  const asksToTransfer =
+    value.includes('transfer money') ||
+    value.includes('send money') ||
+    value.includes('make transfer') ||
+    value.includes('new transfer') ||
+    value.includes('בצע העברה') ||
+    value.includes('להעביר') ||
+    value.includes('תעביר') ||
+    value.includes('שלח כסף') ||
+    value.includes('לשלוח כסף');
+
+  const isHistoryQuestion =
+    value.includes('last') ||
+    value.includes('recent') ||
+    value.includes('latest') ||
+    value.includes('history') ||
+    value.includes('אחרונ') ||
+    value.includes('היסטור');
+
+  return asksToTransfer && !isHistoryQuestion;
+};
+
 const getRequestedTransferCount = (text) => {
   const value = String(text || '').toLowerCase();
   const countMatch = value.match(/\b(\d{1,2})\b/);
@@ -412,7 +436,11 @@ const inferDateRangeFromText = (text) => {
   if (
     value.includes('last month') ||
     value.includes('בחודש האחרון') ||
-    value.includes('חודש אחרון')
+    value.includes('חודש אחרון') ||
+    value.includes('בחודש קודם') ||
+    value.includes('בחודש הקודם') ||
+    value.includes('חודש קודם') ||
+    value.includes('previous month')
   ) {
     return { from: 'last month' };
   }
@@ -476,11 +504,11 @@ const formatFinancialResponse = (toolName, result, userLanguage) => {
 
       const rows = result.items
         .map((tx, index) =>
-          `${index + 1}. סכום: ${tx.amount} ILS\nשולח: ${tx.fromEmail}\nמקבל: ${tx.toEmail}\nתאריך: ${formatDateForUser(tx.createdAt, userLanguage)}`
+          `${index + 1}) סכום: ${tx.amount} ILS\nשולח: ${tx.fromEmail}\nמקבל: ${tx.toEmail}\nתאריך: ${formatDateForUser(tx.createdAt, userLanguage)}`
         )
-        .join('\n');
+        .join('\n\n');
 
-      return `הנה ${result.items.length} ההעברות האחרונות בטווח שביקשת:\n${rows}`;
+      return `מצאתי עבורך ${result.items.length} העברות אחרונות בטווח שביקשת:\n\n${rows}`;
     }
   }
 
@@ -508,11 +536,11 @@ const formatFinancialResponse = (toolName, result, userLanguage) => {
 
     const rows = result.items
       .map((tx, index) =>
-        `${index + 1}. Amount: ${tx.amount} ILS\nFrom: ${tx.fromEmail}\nTo: ${tx.toEmail}\nDate: ${formatDateForUser(tx.createdAt, userLanguage)}`
+        `${index + 1}) Amount: ${tx.amount} ILS\nFrom: ${tx.fromEmail}\nTo: ${tx.toEmail}\nDate: ${formatDateForUser(tx.createdAt, userLanguage)}`
       )
-      .join('\n');
+      .join('\n\n');
 
-    return `Here are the latest ${result.items.length} transfers in your requested range:\n${rows}`;
+    return `I found ${result.items.length} recent transfers in your requested range:\n\n${rows}`;
   }
 
   return 'Data retrieved successfully.';
@@ -572,6 +600,23 @@ export const generateAssistantReply = async ({
         { role: 'assistant', content: reply }
       ].slice(-MAX_HISTORY),
       action: 'open_video_call'
+    };
+  }
+
+  if (isMoneyTransferIntent(trimmed)) {
+    const reply =
+      userLanguage === 'he'
+        ? 'כן. פתחתי לך את מסך העברת הכסף. מלא מייל של יעד, סכום ותיאור אם צריך.'
+        : 'Yes. I opened the money transfer screen for you. Fill recipient email, amount and optional description.';
+
+    return {
+      reply,
+      nextHistory: [
+        ...history.slice(-MAX_HISTORY),
+        { role: 'user', content: trimmed },
+        { role: 'assistant', content: reply }
+      ].slice(-MAX_HISTORY),
+      action: 'open_money_transfer'
     };
   }
 
