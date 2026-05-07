@@ -341,7 +341,7 @@ const resetPassword = async (req, res) => {
 
 /* ================= OPEN RESET PASSWORD PAGE ================= */
 const openResetPasswordPage = (req, res) => {
-  const token = String(req.query?.token || '').trim();
+  const token = String(req.params?.token || req.query?.token || '').trim();
 
   if (!token) {
     return res.status(400).send('Missing reset token');
@@ -355,7 +355,7 @@ const openResetPasswordPage = (req, res) => {
     return res.status(500).send('FRONTEND_BASE_URL is not configured');
   }
 
-  const redirectUrl = `${frontendBaseUrl.replace(/\/$/, '')}/reset-password?token=${encodeURIComponent(token)}`;
+  const redirectUrl = `${frontendBaseUrl.replace(/\/$/, '')}/reset-password#token=${encodeURIComponent(token)}`;
   return res.redirect(302, redirectUrl);
 };
 
