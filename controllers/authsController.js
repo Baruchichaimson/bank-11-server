@@ -328,6 +328,26 @@ const resetPassword = async (req, res) => {
   }
 };
 
+/* ================= OPEN RESET PASSWORD PAGE ================= */
+const openResetPasswordPage = (req, res) => {
+  const token = String(req.query?.token || '').trim();
+
+  if (!token) {
+    return res.status(400).send('Missing reset token');
+  }
+
+  const frontendBaseUrl = String(
+    process.env.FRONTEND_BASE_URL || process.env.APP_BASE_URL || ''
+  ).trim();
+
+  if (!frontendBaseUrl) {
+    return res.status(500).send('FRONTEND_BASE_URL is not configured');
+  }
+
+  const redirectUrl = `${frontendBaseUrl.replace(/\/$/, '')}/reset-password?token=${encodeURIComponent(token)}`;
+  return res.redirect(302, redirectUrl);
+};
+
 /* ================= VERIFY STATUS ================= */
 const verifyStatus = async (req, res) => {
   try {
@@ -358,5 +378,6 @@ export default {
   logout,
   forgotPassword,
   resetPassword,
+  openResetPasswordPage,
   verifyStatus
 };

@@ -121,11 +121,11 @@ export const sendVerificationEmail = async (email, token) => {
    Password Reset Email
 ====================== */
 export const sendPasswordResetEmail = async (email, token) => {
-  const frontendBaseUrl =
-    process.env.FRONTEND_BASE_URL || process.env.APP_BASE_URL;
-
-  const resetLink =
-    `${frontendBaseUrl}/reset-password?token=${token}`;
+  const appBaseUrl = String(process.env.APP_BASE_URL || '').trim().replace(/\/$/, '');
+  const frontendBaseUrl = String(process.env.FRONTEND_BASE_URL || '').trim().replace(/\/$/, '');
+  const resetLink = appBaseUrl
+    ? `${appBaseUrl}/api/v1/auth/reset-password?token=${encodeURIComponent(token)}`
+    : `${frontendBaseUrl}/reset-password?token=${encodeURIComponent(token)}`;
 
   const content = `
     <h2 style="color:#1a73e8; text-align:center">
