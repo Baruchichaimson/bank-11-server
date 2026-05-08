@@ -122,10 +122,14 @@ export const sendVerificationEmail = async (email, token) => {
 ====================== */
 export const sendPasswordResetEmail = async (email, token) => {
   const appBaseUrl = String(process.env.APP_BASE_URL || '').trim().replace(/\/$/, '');
-  if (!appBaseUrl) {
-    throw new Error('APP_BASE_URL is not configured');
+  const frontendBaseUrl = String(process.env.FRONTEND_BASE_URL || '').trim().replace(/\/$/, '');
+  const resetLink = appBaseUrl
+    ? `${appBaseUrl}/api/v1/auth/reset-password/${encodeURIComponent(token)}`
+    : `${frontendBaseUrl}/reset-password/${encodeURIComponent(token)}`;
+
+  if (!resetLink || (!appBaseUrl && !frontendBaseUrl)) {
+    throw new Error('Neither APP_BASE_URL nor FRONTEND_BASE_URL is configured');
   }
-  const resetLink = `${appBaseUrl}/api/v1/auth/reset-password/${encodeURIComponent(token)}`;
 
   const content = `
     <h2 style="color:#1a73e8; text-align:center">
