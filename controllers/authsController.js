@@ -277,15 +277,10 @@ const forgotPassword = async (req, res) => {
       return res.status(404).json({ message: 'User not registered' });
     }
 
-    const resetToken = jwt.sign(
-      {
-        userId: user._id,
-        email: user.email,
-        type: 'password_reset'
-      },
-      JWT_SECRET,
-      { expiresIn: '1h' }
-    );
+    const resetToken = randomUUID();
+    user.resetPasswordToken = resetToken;
+    user.resetPasswordExpires = Date.now() + 60 * 60 * 1000;
+    await user.save();
 
     await sendPasswordResetEmail(normalizedEmail, resetToken);
 
@@ -311,23 +306,18 @@ const resetPassword = async (req, res) => {
       return res.status(400).json({ message: 'Passwords do not match' });
     }
 
-    let payload;
-    try {
-      payload = jwt.verify(token, JWT_SECRET);
-    } catch (jwtErr) {
-      return res.status(400).json({ message: 'Invalid or expired token' });
-    }
-
-    if (payload?.type !== 'password_reset' || !payload?.userId) {
-      return res.status(400).json({ message: 'Invalid token payload' });
-    }
-
-    const user = await usersModel.findUserById(payload.userId);
+    const user = await usersModel.findUserByResetToken(token);
     if (!user) {
       return res.status(404).json({ message: 'Invalid or expired token' });
     }
 
+    if (!user.resetPasswordExpires || Date.now() > user.resetPasswordExpires) {
+      return res.status(400).json({ message: 'Token expired' });
+    }
+
     user.password = await bcrypt.hash(password, 10);
+    user.resetPasswordToken = null;
+    user.resetPasswordExpires = null;
     await user.save();
 
     return res.status(200).json({
@@ -346,17 +336,156 @@ const openResetPasswordPage = (req, res) => {
   if (!token) {
     return res.status(400).send('Missing reset token');
   }
+  const escapedToken = token.replace(/"/g, '&quot;');
+  return res.status(200).send(`
+    <!DOCTYPE html>
+    <html lang="en">
+      <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <title>Reset Password | Bank One One</title>
+        <style>
+          :root {
+            --brand-1: #0b4fa2;
+            --brand-2: #1a73e8;
+            --bg-1: #eaf2ff;
+            --bg-2: #f6f9ff;
+            --ink: #0f172a;
+            --muted: #475569;
+            --ok: #166534;
+            --ok-bg: #dcfce7;
+            --err: #991b1b;
+            --err-bg: #fee2e2;
+          }
+          * { box-sizing: border-box; }
+          body {
+            margin: 0;
+            min-height: 100vh;
+            font-family: "Segoe UI", Tahoma, Arial, sans-serif;
+            color: var(--ink);
+            background: linear-gradient(145deg, var(--bg-1), var(--bg-2));
+            display: grid;
+            place-items: center;
+            padding: 20px;
+          }
+          .card {
+            width: 100%;
+            max-width: 460px;
+            background: #fff;
+            border-radius: 16px;
+            overflow: hidden;
+            box-shadow: 0 12px 30px rgba(15, 23, 42, 0.14);
+          }
+          .head {
+            padding: 20px 24px;
+            background: linear-gradient(90deg, var(--brand-1), var(--brand-2));
+            color: #fff;
+            font-weight: 700;
+            font-size: 20px;
+          }
+          .content { padding: 24px; }
+          .title { margin: 0 0 8px; font-size: 24px; }
+          .desc { margin: 0 0 18px; color: var(--muted); }
+          label { display: block; font-size: 14px; margin: 10px 0 6px; color: #1e293b; }
+          input {
+            width: 100%;
+            border: 1px solid #cbd5e1;
+            border-radius: 10px;
+            padding: 11px 12px;
+            font-size: 15px;
+            outline: none;
+          }
+          input:focus {
+            border-color: var(--brand-2);
+            box-shadow: 0 0 0 3px rgba(26, 115, 232, 0.16);
+          }
+          button {
+            width: 100%;
+            margin-top: 16px;
+            border: 0;
+            border-radius: 10px;
+            padding: 12px;
+            font-size: 16px;
+            font-weight: 700;
+            color: #fff;
+            background: linear-gradient(90deg, var(--brand-1), var(--brand-2));
+            cursor: pointer;
+          }
+          button:disabled { opacity: 0.7; cursor: not-allowed; }
+          .status {
+            display: none;
+            margin-top: 12px;
+            padding: 10px 12px;
+            border-radius: 8px;
+            font-size: 14px;
+          }
+          .status.ok { display: block; color: var(--ok); background: var(--ok-bg); }
+          .status.err { display: block; color: var(--err); background: var(--err-bg); }
+        </style>
+      </head>
+      <body>
+        <main class="card">
+          <div class="head">Bank One One</div>
+          <section class="content">
+            <h1 class="title">Reset Password</h1>
+            <p class="desc">Choose your new password to continue.</p>
+            <form id="resetForm">
+              <input type="hidden" id="token" value="${escapedToken}" />
+              <label for="password">New password</label>
+              <input id="password" type="password" minlength="6" required />
+              <label for="confirmPassword">Confirm password</label>
+              <input id="confirmPassword" type="password" minlength="6" required />
+              <button type="submit" id="submitBtn">Update password</button>
+              <div id="status" class="status"></div>
+            </form>
+          </section>
+        </main>
+        <script>
+          const form = document.getElementById('resetForm');
+          const submitBtn = document.getElementById('submitBtn');
+          const statusEl = document.getElementById('status');
 
-  const frontendBaseUrl = String(
-    process.env.FRONTEND_BASE_URL || process.env.APP_BASE_URL || ''
-  ).trim();
+          const showStatus = (type, message) => {
+            statusEl.className = 'status ' + type;
+            statusEl.textContent = message;
+          };
 
-  if (!frontendBaseUrl) {
-    return res.status(500).send('FRONTEND_BASE_URL is not configured');
-  }
+          form.addEventListener('submit', async (event) => {
+            event.preventDefault();
+            const token = document.getElementById('token').value;
+            const password = document.getElementById('password').value;
+            const confirmPassword = document.getElementById('confirmPassword').value;
 
-  const redirectUrl = `${frontendBaseUrl.replace(/\/$/, '')}/reset-password#token=${encodeURIComponent(token)}`;
-  return res.redirect(302, redirectUrl);
+            submitBtn.disabled = true;
+            submitBtn.textContent = 'Updating...';
+            statusEl.className = 'status';
+            statusEl.textContent = '';
+
+            try {
+              const response = await fetch('/api/v1/auth/reset-password', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ token, password, confirmPassword })
+              });
+              const result = await response.json();
+
+              if (!response.ok) {
+                showStatus('err', result.message || 'Password update failed');
+              } else {
+                showStatus('ok', 'Password updated successfully. You can now sign in.');
+                form.reset();
+              }
+            } catch (error) {
+              showStatus('err', 'Network error. Please try again.');
+            } finally {
+              submitBtn.disabled = false;
+              submitBtn.textContent = 'Update password';
+            }
+          });
+        </script>
+      </body>
+    </html>
+  `);
 };
 
 /* ================= VERIFY STATUS ================= */
