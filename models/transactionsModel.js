@@ -190,3 +190,25 @@ export const findSentTransactionByRecipientName = async (userId, recipientName) 
     toEmail: recipientEmailRegex,
   }).sort({ createdAt: -1 });
 };
+
+export const findTransactionsWithCounterpartyName = async (userId, recipientName) => {
+  const user = await User.findById(userId).select("email");
+  if (!user?.email) {
+    return [];
+  }
+
+  const normalizedName = recipientName?.trim();
+  if (!normalizedName) {
+    return [];
+  }
+
+  const safeName = escapeRegex(normalizedName);
+  const counterpartyEmailRegex = new RegExp(`^${safeName}@`, "i");
+
+  return Transaction.find({
+    $or: [
+      { fromEmail: user.email, toEmail: counterpartyEmailRegex },
+      { fromEmail: counterpartyEmailRegex, toEmail: user.email },
+    ],
+  }).sort({ createdAt: -1 });
+};

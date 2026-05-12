@@ -648,6 +648,21 @@ const formatFinancialResponse = (toolName, result, userLanguage) => {
       return `ההעברה האחרונה הייתה ${result.amount} ILS\nשולח: ${result.fromEmail}\nמקבל: ${result.toEmail}\nתאריך: ${formatDateForUser(result.createdAt, userLanguage)}.`;
     }
 
+    if (toolName === 'get_last_sent_transfer_to_recipient') {
+      if (!result.items?.length) {
+        return 'לא נמצאו העברות עם איש הקשר שביקשת.';
+      }
+
+      const rows = result.items
+        .map(
+          (tx, index) =>
+            `העברה ${index + 1}\n--------------------\nסכום: ${tx.amount} ILS\nשולח: ${tx.fromEmail}\nמקבל: ${tx.toEmail}\nתאריך: ${formatDateForUser(tx.createdAt, userLanguage)}`
+        )
+        .join('\n\n\n');
+
+      return `מצאתי ${result.items.length} העברות דו־כיווניות עם "${result.recipientName}" (גם ששלחת וגם שקיבלת):\n\n${rows}`;
+    }
+
     if (toolName === 'get_recent_transfers') {
       if (!result.items?.length) {
         return 'לא נמצאו העברות בטווח התאריכים שביקשת.';
@@ -679,6 +694,21 @@ const formatFinancialResponse = (toolName, result, userLanguage) => {
 
   if (toolName === 'get_last_transfer') {
     return `Your latest transfer was ${result.amount} ILS\nFrom: ${result.fromEmail}\nTo: ${result.toEmail}\nDate: ${formatDateForUser(result.createdAt, userLanguage)}.`;
+  }
+
+  if (toolName === 'get_last_sent_transfer_to_recipient') {
+    if (!result.items?.length) {
+      return 'No transfers were found with that contact.';
+    }
+
+    const rows = result.items
+      .map(
+        (tx, index) =>
+          `Transfer ${index + 1}\n--------------------\nAmount: ${tx.amount} ILS\nFrom: ${tx.fromEmail}\nTo: ${tx.toEmail}\nDate: ${formatDateForUser(tx.createdAt, userLanguage)}`
+      )
+      .join('\n\n\n');
+
+    return `I found ${result.items.length} bidirectional transfers with "${result.recipientName}" (both sent and received):\n\n${rows}`;
   }
 
   if (toolName === 'get_recent_transfers') {

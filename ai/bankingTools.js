@@ -1,7 +1,7 @@
 import accountsModel from '../models/accountsModel.js';
 import usersModel from '../models/usersModel.js';
 import {
-  findSentTransactionByRecipientName,
+  findTransactionsWithCounterpartyName,
   findTransactionsByUserId
 } from '../models/transactionsModel.js';
 
@@ -159,7 +159,7 @@ export const bankTools = [
     type: 'function',
     function: {
       name: 'get_last_sent_transfer_to_recipient',
-      description: 'Get the latest outgoing transfer to recipient by local-part name before @',
+      description: 'Get recent transfers with a person by email local-part before @ (both outgoing and incoming)',
       parameters: {
         type: 'object',
         properties: {
@@ -292,7 +292,7 @@ export const executeBankTool = async ({ name, args = {}, userId }) => {
     };
   }
 
-  /* ---------- Last Sent To Recipient ---------- */
+  /* ---------- Transfers With Recipient (Bidirectional) ---------- */
 
   if (name === 'get_last_sent_transfer_to_recipient') {
 
@@ -302,24 +302,29 @@ export const executeBankTool = async ({ name, args = {}, userId }) => {
       return { found: false, message: 'recipientName is required' };
     }
 
-    const sent = await findSentTransactionByRecipientName(userId, recipientName);
-    const tx = Array.isArray(sent) && sent.length ? sent[0] : null;
-
-    if (!tx) {
-      return {
-        found: false,
-        message: `No outgoing transfer found for recipient ${recipientName}`
-      };
-    }
-
-    return {
-      found: true,
+    const transactions = await findTransactionsWithCounterpartyName(userId, recipientName);
+    const items = (transactions || []).slice(0, 10).map((tx) => ({
       id: tx.id,
+      fromEmail: tx.fromEmail,
       toEmail: tx.toEmail,
       amount: Number(tx.amount) || 0,
       status: tx.status,
       description: tx.description || null,
       createdAt: toIso(tx.createdAt)
+    }));
+
+    if (!items.length) {
+      return {
+        found: false,
+        message: `No transfers found with recipient ${recipientName}`
+      };
+    }
+
+    return {
+      found: true,
+      recipientName,
+      count: items.length,
+      items
     };
   }
 

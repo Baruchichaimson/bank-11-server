@@ -4,7 +4,7 @@ import {
   transferMoney,
   findTransactionsByUserId,
   findTransactionById,
-  findSentTransactionByRecipientName
+  findTransactionsWithCounterpartyName
 } from '../models/transactionsModel.js';
 
 /* ================= CREATE TRANSACTION ================= */
@@ -125,7 +125,7 @@ const getTransactionById = async (req, res) => {
   return res.json(transaction);
 };
 
-/* ================= GET SENT TRANSACTION BY RECIPIENT NAME ================= */
+/* ================= GET TRANSACTIONS WITH COUNTERPARTY NAME ================= */
 const getSentTransactionByRecipientName = async (req, res) => {
   const { recipientName } = req.params;
 
@@ -133,13 +133,13 @@ const getSentTransactionByRecipientName = async (req, res) => {
     return res.status(400).json({ message: 'recipientName is required' });
   }
 
-  const transaction = await findSentTransactionByRecipientName(req.userId, recipientName);
+  const transactions = await findTransactionsWithCounterpartyName(req.userId, recipientName);
 
-  if (!transaction) {
+  if (!transactions?.length) {
     return res.status(404).json({ message: 'Transaction not found' });
   }
 
-  return res.json(transaction);
+  return res.json(transactions);
 };
 
 export default {
