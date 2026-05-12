@@ -453,7 +453,58 @@ const sanitizeAssistantText = (text) => {
   return String(text || '')
     .replace(/<function[\s\S]*$/gi, '')
     .replace(/<\/?function[^>]*>/gi, '')
+    .replace(/\{[\s\S]*?"name"\s*:\s*"[^"]+"[\s\S]*?\}/gi, '')
     .trim();
+};
+
+const getFriendlyErrorReply = (message, userLanguage) => {
+  const normalized = String(message || '').toLowerCase().trim();
+
+  if (
+    normalized.includes('unauthorized') ||
+    normalized.includes('not authorized')
+  ) {
+    return userLanguage === 'he'
+      ? 'כדי לעזור עם נתוני החשבון שלך צריך להתחבר מחדש. אפשר לנסות להתנתק ולהתחבר שוב.'
+      : 'To access your account details, please sign in again and try once more.';
+  }
+
+  if (normalized.includes('account not found')) {
+    return userLanguage === 'he'
+      ? 'לא הצלחתי למצוא חשבון פעיל עבור המשתמש שלך. אפשר לפנות לתמיכה כדי לבדוק את זה.'
+      : 'I could not find an active account for your user. Please contact support to review this.';
+  }
+
+  if (normalized.includes('user not found')) {
+    return userLanguage === 'he'
+      ? 'לא הצלחתי לאמת את פרטי המשתמש שלך כרגע. נסה שוב בעוד רגע.'
+      : 'I could not verify your user details right now. Please try again in a moment.';
+  }
+
+  if (
+    normalized.includes('unable to retrieve data') ||
+    normalized.includes('failed') ||
+    normalized.includes('error')
+  ) {
+    return userLanguage === 'he'
+      ? 'אירעה תקלה זמנית בשליפת הנתונים. נסה שוב בעוד רגע.'
+      : 'There was a temporary issue retrieving your data. Please try again shortly.';
+  }
+
+  return '';
+};
+
+const containsToolLeak = (text) => {
+  const value = String(text || '').toLowerCase();
+  return (
+    value.includes('function') ||
+    value.includes('tool') ||
+    value.includes('get_balance') ||
+    value.includes('get_user_identity') ||
+    value.includes('count_transfers') ||
+    value.includes('get_last_transfer') ||
+    value.includes('get_recent_transfers')
+  );
 };
 
 const getRequestedTransferCount = (text) => {
@@ -570,7 +621,12 @@ const formatFinancialResponse = (toolName, result, userLanguage) => {
         ? 'לא הצלחתי להבין את טווח התאריכים. נסה למשל: "3 העברות אחרונות בחודש האחרון".'
         : 'I could not parse the date range. Try: "3 latest transfers in the last month".';
     }
-    return result?.message || 'Unable to retrieve data.';
+    return (
+      getFriendlyErrorReply(result?.message, userLanguage) ||
+      (userLanguage === 'he'
+        ? 'לא הצלחתי לשלוף את הנתונים כרגע. נסה שוב בעוד רגע.'
+        : 'I could not retrieve your data right now. Please try again shortly.')
+    );
   }
 
   // Hebrew
@@ -823,12 +879,18 @@ export const generateAssistantReply = async ({
         ? 'אני לא יכול לסייע בבקשה הזו.'
         : 'I cannot assist with that request.');
 
+    const safeReply = containsToolLeak(normalReply)
+      ? (userLanguage === 'he'
+        ? 'כדי לעזור עם פרטי חשבון, אפשר לשאול אותי למשל "מה היתרה שלי?" ואטפל בזה עבורך.'
+        : 'For account details, ask me for example "What is my balance?" and I will handle it for you.')
+      : normalReply;
+
     return {
-      reply: normalReply,
+      reply: safeReply,
       nextHistory: [
         ...shortHistory,
         { role: 'user', content: trimmed },
-        { role: 'assistant', content: normalReply }
+        { role: 'assistant', content: safeReply }
       ].slice(-MAX_HISTORY),
       action: null
     };
