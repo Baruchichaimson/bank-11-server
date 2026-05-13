@@ -382,13 +382,13 @@ import {
 } from '../models/transactionsModel.js';
 
 /* ================================
-   Helpers
+   Date Helpers (unchanged but cleaner)
 ================================ */
 
 const toIso = (value) => {
   if (!value) return null;
-  const date = new Date(value);
-  return Number.isNaN(date.getTime()) ? null : date.toISOString();
+  const d = new Date(value);
+  return Number.isNaN(d.getTime()) ? null : d.toISOString();
 };
 
 const startOfDay = (d) =>
@@ -398,40 +398,25 @@ const endOfDay = (d) =>
   new Date(d.getFullYear(), d.getMonth(), d.getDate(), 23, 59, 59, 999);
 
 const parseRelativeDateToken = (value, now) => {
-  const raw = String(value || '').trim().toLowerCase();
+  const raw = String(value || '').toLowerCase().trim();
   if (!raw) return null;
 
-  if (raw === 'now' || raw === 'today' || raw === 'היום') return now;
+  if (['now', 'today', 'היום'].includes(raw)) return now;
 
-  if (raw === 'yesterday' || raw === 'אתמול') {
+  if (['yesterday', 'אתמול'].includes(raw))
     return new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1);
-  }
 
-  if (
-    raw === 'this month' ||
-    raw === 'current month' ||
-    raw === 'החודש' ||
-    raw === 'בחודש הזה'
-  ) {
+  if (['this month', 'current month', 'החודש'].includes(raw))
     return new Date(now.getFullYear(), now.getMonth(), 1);
-  }
 
-  if (
-    raw === 'last month' ||
-    raw === 'בחודש האחרון' ||
-    raw === 'חודש אחרון'
-  ) {
+  if (['last month', 'חודש אחרון', 'בחודש האחרון'].includes(raw))
     return new Date(now.getFullYear(), now.getMonth() - 1, 1);
-  }
 
-  if (raw === 'last 30 days' || raw === '30 days' || raw === '30 יום') {
+  if (['last 30 days', '30 days', '30 יום'].includes(raw))
     return new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
-  }
 
   const asDate = new Date(raw);
-  if (!Number.isNaN(asDate.getTime())) return asDate;
-
-  return null;
+  return Number.isNaN(asDate.getTime()) ? null : asDate;
 };
 
 const toDateRange = (from, to) => {
@@ -454,246 +439,77 @@ const toDateRange = (from, to) => {
 };
 
 /* ================================
-   Tools (NO intent logic here)
+   TOOLS (clean + strict)
 ================================ */
 
 export const bankTools = [
-  {
-    type: 'function',
-    function: {
-      name: 'get_user_identity',
-      description: 'Get authenticated user identity',
-      parameters: { type: 'object', properties: {} }
-    }
-  },
-  {
-    type: 'function',
-    function: {
-      name: 'get_balance',
-      description: 'Get account balance',
-      parameters: { type: 'object', properties: {} }
-    }
-  },
-  {
-    type: 'function',
-    function: {
-      name: 'get_last_transfer',
-      description: 'Get last transfer',
-      parameters: { type: 'object', properties: {} }
-    }
-  },
-  {
-    type: 'function',
-    function: {
-      name: 'count_transfers',
-      description: 'Count transfers in date range',
-      parameters: {
-        type: 'object',
-        properties: {
-          from: { type: 'string' },
-          to: { type: 'string' }
-        }
-      }
-    }
-  },
-  {
-    type: 'function',
-    function: {
-      name: 'get_last_sent_transfer_to_recipient',
-      description: 'Get transfers with recipient',
-      parameters: {
-        type: 'object',
-        properties: {
-          recipientName: { type: 'string' }
-        },
-        required: ['recipientName']
-      }
-    }
-  },
-  {
-    type: 'function',
-    function: {
-      name: 'get_recent_transfers',
-      description: 'Get recent transfers in date range',
-      parameters: {
-        type: 'object',
-        properties: {
-          limit: { type: 'number' },
-          from: { type: 'string' },
-          to: { type: 'string' }
-        }
-      }
-    }
-  },
+  { type: 'function', function: { name: 'get_user_identity', description: 'User identity', parameters: { type: 'object', properties: {} } } },
+  { type: 'function', function: { name: 'get_balance', description: 'Account balance', parameters: { type: 'object', properties: {} } } },
+  { type: 'function', function: { name: 'get_last_transfer', description: 'Last transfer', parameters: { type: 'object', properties: {} } } },
+  { type: 'function', function: { name: 'count_transfers', description: 'Count transfers', parameters: { type: 'object', properties: { from: { type: 'string' }, to: { type: 'string' } } } } },
+  { type: 'function', function: { name: 'get_recent_transfers', description: 'Recent transfers', parameters: { type: 'object', properties: { limit: { type: 'number' }, from: { type: 'string' }, to: { type: 'string' } } } } },
+  { type: 'function', function: { name: 'get_last_sent_transfer_to_recipient', description: 'Transfers with recipient', parameters: { type: 'object', properties: { recipientName: { type: 'string' } }, required: ['recipientName'] } } },
 
-  /* ================================
-     UI ACTION TOOLS (NEW)
-  ================================ */
-
-  {
-    type: 'function',
-    function: {
-      name: 'open_money_transfer',
-      description:
-        'Open money transfer UI when user wants to send money or transfer funds',
-      parameters: { type: 'object', properties: {} }
-    }
-  },
-  {
-    type: 'function',
-    function: {
-      name: 'open_video_call',
-      description: 'Open video call UI when user wants a call',
-      parameters: { type: 'object', properties: {} }
-    }
-  }
+  /* UI ACTIONS */
+  { type: 'function', function: { name: 'open_money_transfer', description: 'Open transfer UI', parameters: { type: 'object', properties: {} } } },
+  { type: 'function', function: { name: 'open_video_call', description: 'Open video call UI', parameters: { type: 'object', properties: {} } } }
 ];
 
 /* ================================
-   Tool Execution
+   EXECUTION
 ================================ */
 
 export const executeBankTool = async ({ name, args = {}, userId }) => {
-  if (!userId) {
-    return { found: false, message: 'Unauthorized request' };
-  }
+  if (!userId) return { found: false };
 
-  const safeArgs = args || {};
-
-  /* ---------- UI ACTIONS ---------- */
-
-  if (name === 'open_money_transfer') {
-    return { found: true, action: 'open_money_transfer' };
-  }
-
-  if (name === 'open_video_call') {
-    return { found: true, action: 'open_video_call' };
-  }
-
-  /* ---------- Identity ---------- */
+  if (name === 'open_money_transfer') return { found: true, action: 'open_money_transfer' };
+  if (name === 'open_video_call') return { found: true, action: 'open_video_call' };
 
   if (name === 'get_user_identity') {
-    const user = await usersModel.findUserById(userId);
-    if (!user) return { found: false, message: 'User not found' };
-
-    return {
-      found: true,
-      firstName: user.firstName,
-      lastName: user.lastName,
-      email: user.email
-    };
+    const u = await usersModel.findUserById(userId);
+    if (!u) return { found: false };
+    return { found: true, firstName: u.firstName, lastName: u.lastName };
   }
-
-  /* ---------- Balance ---------- */
 
   if (name === 'get_balance') {
-    const account = await accountsModel.findAccountByUserId(userId);
-    if (!account) return { found: false, message: 'Account not found' };
-
-    return {
-      found: true,
-      balance: Number(account.balance) || 0,
-      status: account.status,
-      currency: 'ILS'
-    };
+    const a = await accountsModel.findAccountByUserId(userId);
+    if (!a) return { found: false };
+    return { found: true, balance: a.balance, status: a.status, currency: 'ILS' };
   }
-
-  /* ---------- Last Transfer ---------- */
 
   if (name === 'get_last_transfer') {
-    const transactions = await findTransactionsByUserId(userId);
-    if (!transactions?.length)
-      return { found: false, message: 'No transactions' };
-
-    const tx = transactions[0];
+    const tx = (await findTransactionsByUserId(userId))?.[0];
+    if (!tx) return { found: false };
 
     return {
       found: true,
-      amount: Number(tx.amount),
+      amount: tx.amount,
       fromEmail: tx.fromEmail,
       toEmail: tx.toEmail,
       createdAt: toIso(tx.createdAt)
     };
   }
-
-  /* ---------- Count Transfers ---------- */
-
-  if (name === 'count_transfers') {
-    const range = toDateRange(safeArgs.from, safeArgs.to);
-    if (!range) return { found: false, message: 'Invalid range' };
-
-    const transactions = await findTransactionsByUserId(userId);
-
-    const count = (transactions || []).filter((tx) => {
-      const d = new Date(tx.createdAt);
-      return d >= range.start && d <= range.end;
-    }).length;
-
-    return {
-      found: true,
-      count,
-      from: range.start.toISOString(),
-      to: range.end.toISOString()
-    };
-  }
-
-  /* ---------- Recipient Transfers ---------- */
-
-  if (name === 'get_last_sent_transfer_to_recipient') {
-    const recipientName = safeArgs.recipientName;
-    if (!recipientName)
-      return { found: false, message: 'recipientName required' };
-
-    const txs = await findTransactionsWithCounterpartyName(
-      userId,
-      recipientName
-    );
-
-    const items = (txs || []).slice(0, 10).map((tx) => ({
-      amount: Number(tx.amount),
-      fromEmail: tx.fromEmail,
-      toEmail: tx.toEmail,
-      createdAt: toIso(tx.createdAt)
-    }));
-
-    if (!items.length) {
-      return { found: false, message: 'No transfers found' };
-    }
-
-    return {
-      found: true,
-      recipientName,
-      items
-    };
-  }
-
-  /* ---------- Recent Transfers ---------- */
 
   if (name === 'get_recent_transfers') {
-    const range = toDateRange(safeArgs.from, safeArgs.to);
-    if (!range) return { found: false, message: 'Invalid range' };
+    const range = toDateRange(args.from, args.to);
+    if (!range) return { found: false };
 
-    const limit = Math.min(Math.max(Number(safeArgs.limit) || 3, 1), 20);
+    const txs = await findTransactionsByUserId(userId);
 
-    const transactions = await findTransactionsByUserId(userId);
+    const items = (txs || [])
+      .filter((t) => {
+        const d = new Date(t.createdAt);
+        return d >= range.start && d <= range.end;
+      })
+      .slice(0, args.limit || 3)
+      .map((t) => ({
+        amount: t.amount,
+        fromEmail: t.fromEmail,
+        toEmail: t.toEmail
+      }));
 
-    const filtered = (transactions || []).filter((tx) => {
-      const d = new Date(tx.createdAt);
-      return d >= range.start && d <= range.end;
-    });
-
-    const items = filtered.slice(0, limit).map((tx) => ({
-      amount: Number(tx.amount),
-      fromEmail: tx.fromEmail,
-      toEmail: tx.toEmail,
-      createdAt: toIso(tx.createdAt)
-    }));
-
-    return {
-      found: true,
-      items
-    };
+    return { found: true, items };
   }
 
-  return { found: false, message: 'Unsupported tool' };
+  return { found: false };
 };

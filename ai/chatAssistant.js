@@ -622,23 +622,27 @@ import { bankTools, executeBankTool } from './bankingTools.js';
 const MAX_HISTORY = 12;
 
 /* ================================
-   System Prompt (IMPORTANT CHANGE)
+   System Prompt (IMPROVED TOOL SELECTION)
 ================================= */
 
 const SYSTEM_PROMPT = `
 You are a secure banking assistant.
 
-You have tools for:
-- identity
-- balance
-- transfers
-- UI actions (open screens)
+You MUST follow these rules strictly:
+
+TOOLS USAGE RULES:
+- "balance", "how much money", "my money" → ALWAYS use get_balance
+- "my name", "who am i", "email" → ALWAYS use get_user_identity
+- "last transfer" → get_last_transfer
+- "transfer history", "transactions", "recent payments" → get_recent_transfers
+- "how many transfers" → count_transfers
+- "send money", "transfer money" → open_money_transfer
+- "video call", "call user" → open_video_call
 
 IMPORTANT:
-- Always use tools for banking or UI actions.
-- Never guess financial data.
-- If user wants to transfer money → call open_money_transfer tool.
-- If user wants video call → call open_video_call tool.
+- NEVER guess financial data.
+- ALWAYS use tools for banking data.
+- DO NOT return JSON to user — only human readable text.
 `.trim();
 
 /* ================================
@@ -668,12 +672,62 @@ const createCompletion = async (payload) => {
   );
 };
 
-const formatHistory = (history, user, assistant) => {
-  return [
-    ...history.slice(-MAX_HISTORY),
-    { role: 'user', content: user },
-    { role: 'assistant', content: assistant }
-  ].slice(-MAX_HISTORY);
+/* ================================
+   HUMAN FORMATTER (NEW - IMPORTANT)
+================================ */
+
+const formatToolResponse = (name, result, lang) => {
+  if (!result?.found) {
+    return lang === 'he'
+      ? 'לא הצלחתי למצוא מידע כרגע.'
+      : 'I could not find the requested information.';
+  }
+
+  /* ---------- Identity ---------- */
+  if (name === 'get_user_identity') {
+    return lang === 'he'
+      ? `שמך הוא ${result.firstName} ${result.lastName}.`
+      : `Your name is ${result.firstName} ${result.lastName}.`;
+  }
+
+  /* ---------- Balance ---------- */
+  if (name === 'get_balance') {
+    return lang === 'he'
+      ? `היתרה שלך היא ${result.balance} ${result.currency}. סטטוס: ${result.status}.`
+      : `Your balance is ${result.balance} ${result.currency}. Status: ${result.status}.`;
+  }
+
+  /* ---------- Last Transfer ---------- */
+  if (name === 'get_last_transfer') {
+    return lang === 'he'
+      ? `העברה אחרונה: ${result.amount} ILS\nמ: ${result.fromEmail}\nאל: ${result.toEmail}`
+      : `Last transfer: ${result.amount} ILS\nFrom: ${result.fromEmail}\nTo: ${result.toEmail}`;
+  }
+
+  /* ---------- Recent Transfers ---------- */
+  if (name === 'get_recent_transfers') {
+    if (!result.items?.length) {
+      return lang === 'he'
+        ? 'לא נמצאו העברות.'
+        : 'No transfers found.';
+    }
+
+    const lines = result.items
+      .map(
+        (tx, i) =>
+          `${i + 1}. ${tx.amount} ILS - ${tx.fromEmail} → ${tx.toEmail}`
+      )
+      .join('\n');
+
+    return lang === 'he'
+      ? `הנה ההעברות:\n${lines}`
+      : `Here are your transfers:\n${lines}`;
+  }
+
+  /* ---------- Default ---------- */
+  return lang === 'he'
+    ? 'המידע נשלף בהצלחה.'
+    : 'Information retrieved successfully.';
 };
 
 /* ================================
@@ -691,10 +745,7 @@ export const generateAssistantReply = async ({
 
   if (!trimmed) {
     return {
-      reply:
-        lang === 'he'
-          ? 'אנא כתוב הודעה.'
-          : 'Please type a message.',
+      reply: lang === 'he' ? 'אנא כתוב הודעה.' : 'Please type a message.',
       nextHistory: history,
       action: null
     };
@@ -727,7 +778,7 @@ export const generateAssistantReply = async ({
     const toolCalls = msg?.tool_calls || [];
 
     /* ================================
-       TOOL FLOW (UNIFIED)
+       TOOL FLOW
     ================================ */
 
     if (toolCalls.length > 0) {
@@ -742,24 +793,25 @@ export const generateAssistantReply = async ({
         userId
       });
 
-      /* ---------- UI ACTION ---------- */
-
+      /* UI ACTION */
       if (result.action) {
         return {
-          reply:
-            lang === 'he'
-              ? 'פותח עבורך את המסך...'
-              : 'Opening screen...',
-          nextHistory: formatHistory(history, trimmed, ''),
+          reply: lang === 'he' ? 'פותח מסך...' : 'Opening screen...',
+          nextHistory: history,
           action: result.action
         };
       }
 
-      /* ---------- DATA RESPONSE ---------- */
+      /* HUMAN RESPONSE (IMPORTANT FIX) */
+      const reply = formatToolResponse(name, result, lang);
 
       return {
-        reply: JSON.stringify(result, null, 2),
-        nextHistory: formatHistory(history, trimmed, ''),
+        reply,
+        nextHistory: [
+          ...history.slice(-MAX_HISTORY),
+          { role: 'user', content: trimmed },
+          { role: 'assistant', content: reply }
+        ].slice(-MAX_HISTORY),
         action: null
       };
     }
@@ -771,12 +823,16 @@ export const generateAssistantReply = async ({
     const reply =
       msg?.content ||
       (lang === 'he'
-        ? 'לא הבנתי את הבקשה.'
+        ? 'לא הבנתי.'
         : 'I did not understand.');
 
     return {
       reply,
-      nextHistory: formatHistory(history, trimmed, reply),
+      nextHistory: [
+        ...history.slice(-MAX_HISTORY),
+        { role: 'user', content: trimmed },
+        { role: 'assistant', content: reply }
+      ],
       action: null
     };
   } catch (err) {
