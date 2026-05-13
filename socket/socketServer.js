@@ -106,6 +106,7 @@ export const initSocketServer = (httpServer) => {
 
   io.on('connection', (socket) => {
     let history = [];
+    let transferState = null;
     const activeAssistantRequests = new Map();
     const normalizedEmail = normalizeEmail(socket.user.email);
     const userSet = userSockets.get(normalizedEmail) || new Set();
@@ -148,10 +149,11 @@ export const initSocketServer = (httpServer) => {
           lastTransactions: transactions?.slice(0, 5)
         };
 
-        const { reply, nextHistory, action } = await generateAssistantReply({
+        const { reply, nextHistory, nextTransferState, action } = await generateAssistantReply({
           userInput: text,
           userId: socket.user.id,
           history,
+          transferState,
           userContext,
           abortSignal: controller.signal
         });
@@ -162,6 +164,7 @@ export const initSocketServer = (httpServer) => {
         }
 
         history = nextHistory;
+        transferState = nextTransferState || null;
         socket.emit(REPLY_EVENT, { requestId, message: reply, action: action || null });
         activeAssistantRequests.delete(requestId);
       } catch (err) {
