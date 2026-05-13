@@ -70,7 +70,8 @@ const TransferState = Annotation.Root({
   amount: Annotation(),
   description: Annotation(),
   handled: Annotation(),
-  reply: Annotation()
+  reply: Annotation(),
+  action: Annotation()
 });
 
 const processTransfer = async (state) => {
@@ -83,7 +84,7 @@ const processTransfer = async (state) => {
   }
 
   if (!isTransferIntent(userInput) && phase === TRANSFER_PHASE.IDLE) {
-    return { handled: false, reply: '', phase: TRANSFER_PHASE.IDLE };
+    return { handled: false, reply: '', action: null, phase: TRANSFER_PHASE.IDLE };
   }
 
   if (isNo(userInput)) {
@@ -92,6 +93,7 @@ const processTransfer = async (state) => {
       reply: userLanguage === 'he'
         ? 'ביטלתי את תהליך ההעברה.'
         : 'I canceled the transfer flow.',
+      action: null,
       phase: TRANSFER_PHASE.IDLE,
       receiverEmail: '',
       amount: null,
@@ -105,7 +107,17 @@ const processTransfer = async (state) => {
   let description = state.description || '';
 
   if (nextPhase === TRANSFER_PHASE.IDLE) {
-    nextPhase = TRANSFER_PHASE.COLLECT_RECEIVER;
+    return {
+      handled: true,
+      reply: userLanguage === 'he'
+        ? 'פתחתי עבורך טופס העברה קצר בתוך הצ׳אט. מלא פרטים ולחץ שלח.'
+        : 'I opened a quick transfer form in the chat. Fill the details and submit.',
+      action: 'open_money_transfer_inline',
+      phase: TRANSFER_PHASE.IDLE,
+      receiverEmail: '',
+      amount: null,
+      description: ''
+    };
   }
 
   if (nextPhase === TRANSFER_PHASE.COLLECT_RECEIVER) {
@@ -114,6 +126,7 @@ const processTransfer = async (state) => {
       return {
         handled: true,
         reply: buildPrompt(userLanguage, TRANSFER_PHASE.COLLECT_RECEIVER),
+        action: null,
         phase: TRANSFER_PHASE.COLLECT_RECEIVER,
         receiverEmail,
         amount,
@@ -130,6 +143,7 @@ const processTransfer = async (state) => {
       return {
         handled: true,
         reply: buildPrompt(userLanguage, TRANSFER_PHASE.COLLECT_AMOUNT),
+        action: null,
         phase: TRANSFER_PHASE.COLLECT_AMOUNT,
         receiverEmail,
         amount,
@@ -160,6 +174,7 @@ const processTransfer = async (state) => {
     return {
       handled: true,
       reply: summary,
+      action: null,
       phase: TRANSFER_PHASE.AWAIT_CONFIRMATION,
       receiverEmail,
       amount,
@@ -175,6 +190,7 @@ const processTransfer = async (state) => {
         reply: userLanguage === 'he'
           ? 'לא הצלחתי לזהות את המשתמש המחובר.'
           : 'I could not identify the authenticated user.',
+        action: null,
         phase: TRANSFER_PHASE.IDLE
       };
     }
@@ -186,6 +202,7 @@ const processTransfer = async (state) => {
         reply: userLanguage === 'he'
           ? 'לא מצאתי משתמש עם כתובת האימייל הזו.'
           : 'I could not find a user with that email.',
+        action: null,
         phase: TRANSFER_PHASE.COLLECT_RECEIVER,
         receiverEmail: '',
         amount: null,
@@ -199,6 +216,7 @@ const processTransfer = async (state) => {
         reply: userLanguage === 'he'
           ? 'אי אפשר לבצע העברה לעצמך. הזן אימייל אחר.'
           : 'You cannot transfer to your own account. Provide another email.',
+        action: null,
         phase: TRANSFER_PHASE.COLLECT_RECEIVER,
         receiverEmail: '',
         amount: null,
@@ -215,6 +233,7 @@ const processTransfer = async (state) => {
         reply: userLanguage === 'he'
           ? 'לא נמצא חשבון מקור או יעד לביצוע ההעברה.'
           : 'Source or target account was not found.',
+        action: null,
         phase: TRANSFER_PHASE.IDLE
       };
     }
@@ -231,6 +250,7 @@ const processTransfer = async (state) => {
       reply: userLanguage === 'he'
         ? `ההעברה בוצעה בהצלחה: ${amount} ILS ל־${receiverEmail}.`
         : `Transfer completed: ${amount} ILS to ${receiverEmail}.`,
+      action: null,
       phase: TRANSFER_PHASE.IDLE,
       receiverEmail: '',
       amount: null,
@@ -242,6 +262,7 @@ const processTransfer = async (state) => {
       reply: userLanguage === 'he'
         ? `ההעברה נכשלה: ${String(err?.message || 'שגיאה לא ידועה')}`
         : `Transfer failed: ${String(err?.message || 'unknown error')}`,
+      action: null,
       phase: TRANSFER_PHASE.IDLE,
       receiverEmail: '',
       amount: null,
@@ -271,12 +292,14 @@ export const runTransferGraph = async ({
     amount: transferState?.amount ?? null,
     description: transferState?.description || '',
     handled: false,
-    reply: ''
+    reply: '',
+    action: null
   });
 
   return {
     handled: Boolean(result?.handled),
     reply: String(result?.reply || ''),
+    action: result?.action || null,
     nextTransferState: {
       phase: result?.phase || TRANSFER_PHASE.IDLE,
       receiverEmail: result?.receiverEmail || '',
@@ -285,4 +308,3 @@ export const runTransferGraph = async ({
     }
   };
 };
-

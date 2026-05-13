@@ -380,7 +380,7 @@ export const generateAssistantReply = async ({
         { role: 'assistant', content: transferFlow.reply }
       ].slice(-MAX_HISTORY),
       nextTransferState: transferFlow.nextTransferState,
-      action: null
+      action: transferFlow.action || null
     };
   }
 
@@ -448,8 +448,8 @@ export const generateAssistantReply = async ({
 
       if (toolName === 'open_money_transfer_window') {
         const reply = userLanguage === 'he'
-          ? 'פתחתי עבורך את חלון ביצוע ההעברה.'
-          : 'I opened the money transfer window for you.';
+          ? 'פתחתי עבורך טופס העברה קצר בתוך הצ׳אט.'
+          : 'I opened a quick transfer form in the chat.';
         return {
           reply,
           nextHistory: [
@@ -458,7 +458,7 @@ export const generateAssistantReply = async ({
             { role: 'assistant', content: reply }
           ].slice(-MAX_HISTORY),
           nextTransferState: transferState,
-          action: result?.action || 'open_money_transfer'
+          action: 'open_money_transfer_inline'
         };
       }
 
@@ -503,8 +503,8 @@ export const generateAssistantReply = async ({
 
       if (inferred.name === 'open_money_transfer_window') {
         const reply = userLanguage === 'he'
-          ? 'פתחתי עבורך את חלון ביצוע ההעברה.'
-          : 'I opened the money transfer window for you.';
+          ? 'פתחתי עבורך טופס העברה קצר בתוך הצ׳אט.'
+          : 'I opened a quick transfer form in the chat.';
         return {
           reply,
           nextHistory: [
@@ -513,7 +513,7 @@ export const generateAssistantReply = async ({
             { role: 'assistant', content: reply }
           ].slice(-MAX_HISTORY),
           nextTransferState: transferState,
-          action: result?.action || 'open_money_transfer'
+          action: 'open_money_transfer_inline'
         };
       }
 
