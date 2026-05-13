@@ -1,6 +1,5 @@
 import {
   OPENAI_MODEL,
-  OPENAI_FALLBACK_MODEL,
   hasOpenAiKey,
   openai
 } from './openaiClient.js';
@@ -17,11 +16,13 @@ const TOOL_SYSTEM_PROMPT = `
 You are a secure banking assistant.
 
 Rules:
-- For ANY question about balance, transfers, account status or identity → you MUST call a tool.
+- You support banking topics only.
+- For any request to call a representative or start a video call -> call tool: open_video_call_window.
+- For any request to make/send/perform a transfer -> call tool: open_money_transfer_window.
+- For balance, transfers history, account status or identity -> call the relevant banking data tool.
 - Never invent financial or identity information.
-- Use official function calling.
-- If it is general conversation → respond normally.
-- Be polite and natural.
+- If the user asks anything unrelated to banking, politely refuse and redirect to supported banking actions.
+- Keep replies short and practical.
 `.trim();
 
 /* =================================
@@ -46,88 +47,6 @@ const createChatCompletion = async (payload) => {
     },
     abortSignal ? { signal: abortSignal } : undefined
   );
-};
-
-const isVideoCallIntent = (text) => {
-  const normalized = String(text || '').toLowerCase();
-  return (
-    normalized.includes('video call') ||
-    normalized.includes('start call') ||
-    normalized.includes('make a call') ||
-    normalized.includes('שיחת וידיאו') ||
-    normalized.includes('שיחת וידאו') ||
-    normalized.includes('שיחת וידיו') ||
-    normalized.includes('שיחת וידאו')
-  );
-};
-
-const isMoneyTransferIntent = (text) => {
-  const value = String(text || '').toLowerCase();
-  const asksToTransfer =
-    value.includes('transfer money') ||
-    value.includes('send money') ||
-    value.includes('make transfer') ||
-    value.includes('new transfer') ||
-    value.includes('בצע העברה') ||
-    value.includes('להעביר') ||
-    value.includes('תעביר') ||
-    value.includes('שלח כסף') ||
-    value.includes('לשלוח כסף') ||
-    value.includes('איך שולחים כסף') ||
-    value.includes('איך אני שולח כסף') ||
-    value.includes('איך שולחת כסף') ||
-    value.includes('איך שולחים') ||
-    value.includes('שליחת כסף');
-
-  const isHistoryQuestion =
-    value.includes('last') ||
-    value.includes('recent') ||
-    value.includes('latest') ||
-    value.includes('history') ||
-    value.includes('אחרונ') ||
-    value.includes('היסטור');
-
-  return asksToTransfer && !isHistoryQuestion;
-};
-
-const hasTransferKeyword = (text) => {
-  const value = String(text || '').toLowerCase();
-  return (
-    value.includes('transfer') ||
-    value.includes('money') ||
-    value.includes('העברה') ||
-    value.includes('להעביר') ||
-    value.includes('כסף')
-  );
-};
-
-const isTransferHowIntent = (text, history = []) => {
-  const value = String(text || '').toLowerCase().trim();
-  const asksHow =
-    value.includes('how to') ||
-    value.includes('how do i') ||
-    value.includes('how can i send money') ||
-    value.includes('איך מבצעים') ||
-    value.includes('איך לבצע') ||
-    value.includes('איך ניתן לבצע') ||
-    value.includes('איך שולחים כסף') ||
-    value.includes('איך אני שולח כסף') ||
-    value.includes('איך שולחים') ||
-    value === 'איך מבצעים?' ||
-    value === 'איך מבצעים' ||
-    value === 'איך שולחים?' ||
-    value === 'איך שולחים';
-
-  if (!asksHow) return false;
-  if (hasTransferKeyword(value)) return true;
-
-  // Support short follow-up questions like "איך מבצעים?" after transfer-related context.
-  const recentUserTexts = history
-    .filter((item) => item?.role === 'user')
-    .slice(-3)
-    .map((item) => item?.content || '');
-
-  return recentUserTexts.some(hasTransferKeyword);
 };
 
 const sanitizeAssistantText = (text) => {
@@ -188,100 +107,11 @@ const containsToolLeak = (text) => {
   );
 };
 
-const getRequestedTransferCount = (text) => {
-  const value = String(text || '').toLowerCase();
-  const countMatch = value.match(/\b(\d{1,2})\b/);
-  const requested = countMatch ? Number(countMatch[1]) : null;
-  if (!requested || requested < 1) return null;
-  return Math.min(requested, 20);
-};
-
-const isRecentTransfersIntent = (text) => {
-  const value = String(text || '').toLowerCase();
-  const hasTransferWord =
-    value.includes('transfer') ||
-    value.includes('transfers') ||
-    value.includes('transaction') ||
-    value.includes('transactions') ||
-    value.includes('העברה') ||
-    value.includes('העברות') ||
-    value.includes('טרנזקציה') ||
-    value.includes('טרנזקציות');
-
-  if (!hasTransferWord) return false;
-  const isCountQuestion =
-    value.includes('כמה ') ||
-    value.startsWith('כמה') ||
-    value.includes('how many');
-
-  const asksForCountedList = /\b\d{1,2}\b/.test(value) && (
-    value.includes('מה הם') ||
-    value.includes('תציג') ||
-    value.includes('show') ||
-    value.includes('list') ||
-    value.includes('give me')
-  );
-
-  const asksForMonthRange =
-    value.includes('בחודש הנוכחי') ||
-    value.includes('חודש נוכחי') ||
-    value.includes('בחודש הזה') ||
-    value.includes('החודש') ||
-    value.includes('בחודש הקודם') ||
-    value.includes('בחודש קודם') ||
-    value.includes('חודש קודם') ||
-    value.includes('last month') ||
-    value.includes('current month') ||
-    value.includes('this month');
-
-  return (
-    !isCountQuestion && (
-    asksForCountedList ||
-    asksForMonthRange ||
-    value.includes('last') ||
-    value.includes('recent') ||
-    value.includes('latest') ||
-    value.includes('אחרונ') ||
-    value.includes('recent')
-    )
-  );
-};
-
-const inferDateRangeFromText = (text) => {
-  const value = String(text || '').toLowerCase();
-  if (
-    value.includes('last month') ||
-    value.includes('בחודש האחרון') ||
-    value.includes('חודש אחרון') ||
-    value.includes('בחודש קודם') ||
-    value.includes('בחודש הקודם') ||
-    value.includes('חודש קודם') ||
-    value.includes('previous month')
-  ) {
-    return { from: 'last month' };
-  }
-
-  if (
-    value.includes('current month') ||
-    value.includes('this month') ||
-    value.includes('בחודש הנוכחי') ||
-    value.includes('חודש נוכחי') ||
-    value.includes('החודש') ||
-    value.includes('בחודש הזה')
-  ) {
-    return { from: 'this month' };
-  }
-
-  if (
-    value.includes('last 30 day') ||
-    value.includes('30 days') ||
-    value.includes('30 יום')
-  ) {
-    return { from: 'last 30 days' };
-  }
-
-  return {};
-};
+const getOutOfScopeReply = (userLanguage) => (
+  userLanguage === 'he'
+    ? 'אני עוזר רק בנושאי בנקאות. אפשר לשאול על יתרה, העברות, סטטוס חשבון, או לבקש פתיחת חלון שיחת וידאו/העברה.'
+    : 'I can help only with banking topics. Ask about balance, transfers, account status, or opening the video-call/transfer window.'
+);
 
 const formatDateForUser = (isoString, userLanguage) => {
   if (!isoString) return '';
@@ -451,81 +281,6 @@ export const generateAssistantReply = async ({
     };
   }
 
-  if (isVideoCallIntent(trimmed)) {
-    const reply =
-      userLanguage === 'he'
-        ? 'כן. פתחתי לך את חלון שיחת הווידאו. הזן את המייל של המשתמש שתרצה להתקשר אליו.'
-        : 'Yes. I opened the video call window for you. Enter the user email to start the call.';
-
-    return {
-      reply,
-      nextHistory: [
-        ...history.slice(-MAX_HISTORY),
-        { role: 'user', content: trimmed },
-        { role: 'assistant', content: reply }
-      ].slice(-MAX_HISTORY),
-      action: 'open_video_call'
-    };
-  }
-
-  if (isTransferHowIntent(trimmed, history)) {
-    const reply =
-      userLanguage === 'he'
-        ? 'כדי לבצע העברה אני פותח לך עכשיו את מסך ההעברה. שם ממלאים מייל יעד, סכום ותיאור (אופציונלי), ולוחצים Send.'
-        : 'To make a transfer, I will open the transfer screen now. Fill recipient email, amount, optional description, then press Send.';
-
-    return {
-      reply,
-      nextHistory: [
-        ...history.slice(-MAX_HISTORY),
-        { role: 'user', content: trimmed },
-        { role: 'assistant', content: reply }
-      ].slice(-MAX_HISTORY),
-      action: 'open_money_transfer'
-    };
-  }
-
-  if (isMoneyTransferIntent(trimmed)) {
-    const reply =
-      userLanguage === 'he'
-        ? 'כן. פתחתי לך את מסך העברת הכסף. מלא מייל של יעד, סכום ותיאור אם צריך.'
-        : 'Yes. I opened the money transfer screen for you. Fill recipient email, amount and optional description.';
-
-    return {
-      reply,
-      nextHistory: [
-        ...history.slice(-MAX_HISTORY),
-        { role: 'user', content: trimmed },
-        { role: 'assistant', content: reply }
-      ].slice(-MAX_HISTORY),
-      action: 'open_money_transfer'
-    };
-  }
-
-  if (isRecentTransfersIntent(trimmed)) {
-    const inferredLimit = getRequestedTransferCount(trimmed) || 3;
-    const inferredRange = inferDateRangeFromText(trimmed);
-    const result = await executeBankTool({
-      name: 'get_recent_transfers',
-      args: {
-        limit: inferredLimit,
-        ...inferredRange
-      },
-      userId
-    });
-
-    const reply = formatFinancialResponse('get_recent_transfers', result, userLanguage);
-    return {
-      reply,
-      nextHistory: [
-        ...history.slice(-MAX_HISTORY),
-        { role: 'user', content: trimmed },
-        { role: 'assistant', content: reply }
-      ].slice(-MAX_HISTORY),
-      action: null
-    };
-  }
-
   const shortHistory = history.slice(-MAX_HISTORY);
 
   const detectionMessages = [
@@ -563,11 +318,37 @@ export const generateAssistantReply = async ({
         userId
       });
 
-      const reply = formatFinancialResponse(
-        toolName,
-        result,
-        userLanguage
-      );
+      if (toolName === 'open_video_call_window') {
+        const reply = userLanguage === 'he'
+          ? 'פתחתי עבורך את חלון שיחת הווידאו.'
+          : 'I opened the video call window for you.';
+        return {
+          reply,
+          nextHistory: [
+            ...shortHistory,
+            { role: 'user', content: trimmed },
+            { role: 'assistant', content: reply }
+          ].slice(-MAX_HISTORY),
+          action: result?.action || 'open_video_call'
+        };
+      }
+
+      if (toolName === 'open_money_transfer_window') {
+        const reply = userLanguage === 'he'
+          ? 'פתחתי עבורך את חלון ביצוע ההעברה.'
+          : 'I opened the money transfer window for you.';
+        return {
+          reply,
+          nextHistory: [
+            ...shortHistory,
+            { role: 'user', content: trimmed },
+            { role: 'assistant', content: reply }
+          ].slice(-MAX_HISTORY),
+          action: result?.action || 'open_money_transfer'
+        };
+      }
+
+      const reply = formatFinancialResponse(toolName, result, userLanguage);
 
       return {
         reply,
@@ -586,14 +367,10 @@ export const generateAssistantReply = async ({
 
     const normalReply =
       sanitizeAssistantText(firstMessage?.content) ||
-      (userLanguage === 'he'
-        ? 'אני לא יכול לסייע בבקשה הזו.'
-        : 'I cannot assist with that request.');
+      getOutOfScopeReply(userLanguage);
 
     const safeReply = containsToolLeak(normalReply)
-      ? (userLanguage === 'he'
-        ? 'כדי לעזור עם פרטי חשבון, אפשר לשאול אותי למשל "מה היתרה שלי?" ואטפל בזה עבורך.'
-        : 'For account details, ask me for example "What is my balance?" and I will handle it for you.')
+      ? getOutOfScopeReply(userLanguage)
       : normalReply;
 
     return {
@@ -610,4 +387,3 @@ export const generateAssistantReply = async ({
     throw new Error(`Assistant failed: ${String(err.message || err)}`);
   }
 };
-

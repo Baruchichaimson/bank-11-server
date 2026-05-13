@@ -120,6 +120,22 @@ export const bankTools = [
   {
     type: 'function',
     function: {
+      name: 'open_video_call_window',
+      description: 'Open the video call window so the user can start a call with a representative or another user',
+      parameters: { type: 'object', properties: {} }
+    }
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'open_money_transfer_window',
+      description: 'Open the money transfer window so the user can perform a new transfer',
+      parameters: { type: 'object', properties: {} }
+    }
+  },
+  {
+    type: 'function',
+    function: {
       name: 'get_user_identity',
       description: 'Get authenticated user first name, last name and email',
       parameters: { type: 'object', properties: {} }
@@ -191,6 +207,19 @@ export const bankTools = [
 ================================ */
 
 export const executeBankTool = async ({ name, args = {}, userId }) => {
+  if (name === 'open_video_call_window') {
+    return {
+      found: true,
+      action: 'open_video_call'
+    };
+  }
+
+  if (name === 'open_money_transfer_window') {
+    return {
+      found: true,
+      action: 'open_money_transfer'
+    };
+  }
 
   if (!userId) {
     return { found: false, message: 'Unauthorized request' };
@@ -373,4 +402,3 @@ export const executeBankTool = async ({ name, args = {}, userId }) => {
     message: `Unsupported tool: ${name}`
   };
 };
-
