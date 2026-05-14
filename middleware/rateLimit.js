@@ -1,12 +1,15 @@
 import rateLimit from 'express-rate-limit';
 
 const ONE_MINUTE_MS = 60 * 1000;
-const retryMessage = 'Too many attempts. You can continue trying again in one minute.';
+const retryMessage = 'יותר מדי ניסיונות. תוכל להמשיך לנסות בעוד דקה.';
 
-const buildLimiter = (max) =>
+const normalizeEmail = (value) => String(value || '').trim().toLowerCase();
+
+const buildLimiter = ({ max, keyGenerator }) =>
   rateLimit({
     windowMs: ONE_MINUTE_MS,
     max,
+    keyGenerator,
     standardHeaders: true,
     legacyHeaders: false,
     message: {
@@ -14,7 +17,23 @@ const buildLimiter = (max) =>
     }
   });
 
-export const authLoginLimiter = buildLimiter(5);
-export const authForgotPasswordLimiter = buildLimiter(3);
-export const authResetPasswordLimiter = buildLimiter(3);
-export const authSignupLimiter = buildLimiter(5);
+const userAndIpKey = (req) => {
+  const email = normalizeEmail(req.body?.email);
+  const ip = String(req.ip || 'unknown-ip');
+  return `${ip}:${email || 'unknown-email'}`;
+};
+
+export const authLoginLimiter = buildLimiter({
+  max: 5,
+  keyGenerator: userAndIpKey
+});
+export const authSignupLimiter = buildLimiter({
+  max: 5,
+  keyGenerator: userAndIpKey
+});
+export const authForgotPasswordLimiter = buildLimiter({
+  max: 3
+});
+export const authResetPasswordLimiter = buildLimiter({
+  max: 3
+});
