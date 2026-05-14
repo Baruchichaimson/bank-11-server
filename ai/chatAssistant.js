@@ -21,6 +21,7 @@ Rules:
 - For any request to call a representative or start a video call -> call tool: open_video_call_window.
 - For any request to make/send/perform a transfer -> call tool: open_money_transfer_window.
 - For balance, transfers history, account status or identity -> call the relevant banking data tool.
+- If user asks about existing transfers/history/count/last transfer, do NOT open transfer window; use data tools.
 - Never invent financial or identity information.
 - If the user asks anything unrelated to banking, politely refuse and redirect to supported banking actions.
 - Keep replies short and practical.
@@ -250,8 +251,29 @@ const detectLanguage = (text) => {
   return 'en';
 };
 
+const normalizeIntentText = (text) => String(text || '')
+  .toLowerCase()
+  // normalize final Hebrew letters
+  .replace(/ך/g, 'כ')
+  .replace(/ם/g, 'מ')
+  .replace(/ן/g, 'נ')
+  .replace(/ף/g, 'פ')
+  .replace(/ץ/g, 'צ')
+  // normalize common keyboard/typo variants around "יתרה"
+  .replace(/הייתרה|היתרה|יתרה|יתרת/g, 'יתרה');
+
+const isBalanceQuery = (text) => {
+  const value = normalizeIntentText(text);
+  return (
+    value.includes('balance') ||
+    value.includes('יתרה') ||
+    value.includes('כמה כסף') ||
+    value.includes('מצב חשבון')
+  );
+};
+
 const isLikelyBankingQuery = (text) => {
-  const value = String(text || '').toLowerCase();
+  const value = normalizeIntentText(text);
   return [
     'balance',
     'transfer',
@@ -269,27 +291,80 @@ const isLikelyBankingQuery = (text) => {
 };
 
 const inferToolFromUserInput = (text) => {
-  const value = String(text || '').toLowerCase();
+  const value = normalizeIntentText(text);
 
   if (
-    value.includes('video') ||
-    value.includes('representative') ||
-    value.includes('שיחת וידאו') ||
-    value.includes('נציג')
+    value.includes("video") ||
+    value.includes("representative") ||
+    value.includes("שיחת וידאו") ||
+    value.includes("נציג")
   ) {
-    return { name: 'open_video_call_window', args: {} };
+    return { name: "open_video_call_window", args: {} };
   }
 
   if (
-    value.includes('send money') ||
-    value.includes('make transfer') ||
-    value.includes('new transfer') ||
-    value.includes('בצע העברה') ||
-    value.includes('להעביר כסף') ||
-    value.includes('העברה חדשה')
+    value.includes("כמה העברות") ||
+    value.includes("how many transfers") ||
+    value.includes("count transfers")
   ) {
-    return { name: 'open_money_transfer_window', args: {} };
+    if (value.includes("last month") || value.includes("בחודש האחרון") || value.includes("חודש אחרון")) {
+      return { name: "count_transfers", args: { from: "last month" } };
+    }
+    if (value.includes("this month") || value.includes("החודש")) {
+      return { name: "count_transfers", args: { from: "this month" } };
+    }
+    return { name: "count_transfers", args: {} };
   }
+
+  if (
+    value.includes("last transfer") ||
+    value.includes("העברה אחרונה")
+  ) {
+    return { name: "get_last_transfer", args: {} };
+  }
+
+  if (
+    value.includes("recent transfers") ||
+    value.includes("transfer history") ||
+    value.includes("history of transfers") ||
+    value.includes("העברות אחרונות") ||
+    value.includes("הסטורית העברות") ||
+    value.includes("היסטורית העברות") ||
+    value.includes("היסטוריה של העברות")
+  ) {
+    return { name: "get_recent_transfers", args: {} };
+  }
+
+  if (isBalanceQuery(value)) {
+    return { name: "get_balance", args: {} };
+  }
+
+  if (
+    value.includes("מי אני") ||
+    value.includes("who am i") ||
+    value.includes("my email") ||
+    value.includes("האימייל שלי")
+  ) {
+    return { name: "get_user_identity", args: {} };
+  }
+
+  if (
+    value.includes("send money") ||
+    value.includes("make transfer") ||
+    value.includes("new transfer") ||
+    value.includes("בצע העברה") ||
+    value.includes("להעביר כסף") ||
+    value.includes("העברה חדשה") ||
+    value.includes("שלח כסף")
+  ) {
+    return { name: "open_money_transfer_window", args: {} };
+  }
+
+  return null;
+};
+
+const inferHighConfidenceTool = (text) => {
+  const value = normalizeIntentText(text);
 
   if (
     value.includes('כמה העברות') ||
@@ -313,26 +388,19 @@ const inferToolFromUserInput = (text) => {
   }
 
   if (
-    value.includes('balance') ||
-    value.includes('יתרה')
-  ) {
-    return { name: 'get_balance', args: {} };
-  }
-
-  if (
-    value.includes('מי אני') ||
-    value.includes('who am i') ||
-    value.includes('my email') ||
-    value.includes('האימייל שלי')
-  ) {
-    return { name: 'get_user_identity', args: {} };
-  }
-
-  if (
     value.includes('recent transfers') ||
-    value.includes('העברות אחרונות')
+    value.includes('transfer history') ||
+    value.includes('history of transfers') ||
+    value.includes('העברות אחרונות') ||
+    value.includes('הסטורית העברות') ||
+    value.includes('היסטורית העברות') ||
+    value.includes('היסטוריה של העברות')
   ) {
     return { name: 'get_recent_transfers', args: {} };
+  }
+
+  if (isBalanceQuery(value)) {
+    return { name: 'get_balance', args: {} };
   }
 
   return null;
@@ -359,6 +427,28 @@ export const generateAssistantReply = async ({
         ? 'אנא כתוב הודעה כדי שאוכל לעזור.'
         : 'Please type a message so I can help.',
       nextHistory: history,
+      nextTransferState: transferState,
+      action: null
+    };
+  }
+
+  const shortHistory = history.slice(-MAX_HISTORY);
+  const highConfidenceTool = inferHighConfidenceTool(trimmed);
+
+  if (highConfidenceTool) {
+    const result = await executeBankTool({
+      name: highConfidenceTool.name,
+      args: highConfidenceTool.args || {},
+      userId
+    });
+    const reply = formatFinancialResponse(highConfidenceTool.name, result, userLanguage);
+    return {
+      reply,
+      nextHistory: [
+        ...shortHistory,
+        { role: 'user', content: trimmed },
+        { role: 'assistant', content: reply }
+      ].slice(-MAX_HISTORY),
       nextTransferState: transferState,
       action: null
     };
@@ -392,8 +482,6 @@ export const generateAssistantReply = async ({
       action: null
     };
   }
-
-  const shortHistory = history.slice(-MAX_HISTORY);
 
   const detectionMessages = [
     { role: 'system', content: TOOL_SYSTEM_PROMPT },

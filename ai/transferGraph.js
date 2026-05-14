@@ -27,15 +27,36 @@ const parseAmount = (text) => {
 };
 
 const isTransferIntent = (text) => {
-  const value = String(text || '').toLowerCase();
-  return [
-    'transfer',
-    'send money',
-    'send',
-    'להעביר',
-    'העברה',
-    'לשלוח כסף'
+  const value = String(text || "").toLowerCase().trim();
+
+  const historyLike = [
+    "היסטור",
+    "history",
+    "last transfer",
+    "העברה אחרונה",
+    "כמה העברות",
+    "count transfers",
+    "recent transfers",
+    "העברות אחרונות"
   ].some((token) => value.includes(token));
+
+  if (historyLike) return false;
+
+  const explicitTransferAction = [
+    "send money",
+    "make transfer",
+    "new transfer",
+    "transfer now",
+    "start transfer",
+    "להעביר כסף",
+    "בצע העברה",
+    "תבצע העברה",
+    "העברה חדשה",
+    "שלח כסף",
+    "תעביר"
+  ].some((token) => value.includes(token));
+
+  return explicitTransferAction;
 };
 
 const isYes = (text) => {
