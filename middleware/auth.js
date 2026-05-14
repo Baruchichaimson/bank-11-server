@@ -1,7 +1,13 @@
 import jwt from 'jsonwebtoken';
 import usersModel from '../models/usersModel.js';
 
-export const JWT_SECRET = process.env.JWT_SECRET || 'my_super_secret_key';
+const JWT_SECRET = process.env.JWT_SECRET;
+
+if (!JWT_SECRET) {
+  throw new Error('Missing required environment variable: JWT_SECRET');
+}
+
+export { JWT_SECRET };
 
 /* =================================================
    1️⃣ Authenticate Token (Header-based)

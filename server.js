@@ -2,6 +2,7 @@ import 'dotenv/config';
 import cors from 'cors';
 import path from 'path';
 import express from 'express';
+import helmet from 'helmet';
 import http from 'http';
 import connectMongoDB from './config/db.js';
 import cookieParser from 'cookie-parser';
@@ -19,7 +20,7 @@ const server = http.createServer(app);
 
 /* ---------- Middlewares ---------- */
 
-
+app.use(helmet());
 app.use(express.json());
 app.use(cookieParser());
 
