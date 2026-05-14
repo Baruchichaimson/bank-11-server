@@ -20,42 +20,100 @@ const endOfDay = (d) => new Date(d.getFullYear(), d.getMonth(), d.getDate(), 23,
 
 const parseRelativeDateToken = (value, now) => {
   const raw = String(value || '').trim().toLowerCase();
-  if (!raw) return null;
+  const normalized = raw
+    .replace(/חוודש|חושד|חודשד/g, 'חודש')
+    .replace(/בחודש שעבר/g, 'חודש שעבר')
+    .replace(/בחודש הקודם/g, 'חודש קודם');
+  if (!normalized) return null;
 
-  if (raw === 'now' || raw === 'today' || raw === 'היום') return now;
-  if (raw === 'yesterday' || raw === 'אתמול') {
+  if (normalized === 'now' || normalized === 'today' || normalized === 'היום') return now;
+  if (normalized === 'yesterday' || normalized === 'אתמול') {
     return new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1);
   }
 
   if (
-    raw === 'this month' ||
-    raw === 'current month' ||
-    raw === 'החודש' ||
-    raw === 'בחודש הזה' ||
-    raw === 'בחודש הנוכחי' ||
-    raw === 'חודש נוכחי'
+    normalized === 'this month' ||
+    normalized === 'current month' ||
+    normalized === 'החודש' ||
+    normalized === 'בחודש הזה' ||
+    normalized === 'בחודש הנוכחי' ||
+    normalized === 'חודש נוכחי'
   ) {
     return new Date(now.getFullYear(), now.getMonth(), 1);
   }
 
   if (
-    raw === 'last month' ||
-    raw === 'בחודש האחרון' ||
-    raw === 'חודש אחרון'
+    normalized === 'start of this month' ||
+    normalized === 'start of month' ||
+    normalized === 'מתחילת החודש' ||
+    normalized === 'מתחילת חודש'
+  ) {
+    return new Date(now.getFullYear(), now.getMonth(), 1);
+  }
+
+  if (
+    normalized === 'end of this month' ||
+    normalized === 'end of month' ||
+    normalized === 'סוף החודש' ||
+    normalized === 'עד סוף החודש' ||
+    normalized === 'סוף חודש'
+  ) {
+    return new Date(now.getFullYear(), now.getMonth() + 1, 0);
+  }
+
+  if (
+    normalized === 'last month' ||
+    normalized === 'בחודש האחרון' ||
+    normalized === 'חודש אחרון' ||
+    normalized === 'חודש קודם' ||
+    normalized === 'חודש שעבר'
   ) {
     return new Date(now.getFullYear(), now.getMonth() - 1, 1);
   }
 
   if (
-    raw === 'last 30 days' ||
-    raw === '30 days' ||
-    raw === '30d' ||
-    raw === '30 יום אחרונים'
+    normalized === 'start of last month' ||
+    normalized === 'מתחילת החודש שעבר' ||
+    normalized === 'מתחילת חודש שעבר' ||
+    normalized === 'מתחילת חודש קודם'
+  ) {
+    return new Date(now.getFullYear(), now.getMonth() - 1, 1);
+  }
+
+  if (
+    normalized === 'end of last month' ||
+    normalized === 'סוף החודש שעבר' ||
+    normalized === 'עד סוף החודש שעבר' ||
+    normalized === 'סוף חודש קודם'
+  ) {
+    return new Date(now.getFullYear(), now.getMonth(), 0);
+  }
+
+  if (
+    normalized === 'start of year' ||
+    normalized === 'מתחילת השנה'
+  ) {
+    return new Date(now.getFullYear(), 0, 1);
+  }
+
+  if (
+    normalized === 'end of year' ||
+    normalized === 'סוף השנה' ||
+    normalized === 'עד סוף השנה'
+  ) {
+    return new Date(now.getFullYear(), 11, 31);
+  }
+
+  if (
+    normalized === 'last 30 days' ||
+    normalized === '30 days' ||
+    normalized === '30d' ||
+    normalized === '30 יום אחרונים'
   ) {
     return new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
   }
 
-  const asDate = new Date(raw);
+  const asDate = new Date(normalized);
   if (!Number.isNaN(asDate.getTime())) return asDate;
   return null;
 };
@@ -85,7 +143,11 @@ const toDateRange = (from, to) => {
     if (
       fromToken === 'last month' ||
       fromToken === 'בחודש האחרון' ||
-      fromToken === 'חודש אחרון'
+      fromToken === 'חודש אחרון' ||
+      fromToken === 'חודש קודם' ||
+      fromToken === 'חודש שעבר' ||
+      fromToken === 'חוודש קודם' ||
+      fromToken === 'חושד קודם'
     ) {
       end = new Date(now.getFullYear(), now.getMonth(), 0, 23, 59, 59, 999);
     }
@@ -367,7 +429,7 @@ export const executeBankTool = async ({ name, args = {}, userId }) => {
 
     const requestedLimit = Number(safeArgs.limit);
     const limit = Number.isFinite(requestedLimit)
-      ? Math.min(Math.max(Math.floor(requestedLimit), 1), 20)
+      ? Math.min(Math.max(Math.floor(requestedLimit), 1), 100)
       : 3;
 
     const transactions = await findTransactionsByUserId(userId);

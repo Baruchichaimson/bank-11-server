@@ -154,7 +154,7 @@ const formatFinancialResponse = (toolName, result, userLanguage) => {
     }
 
     if (toolName === 'count_transfers') {
-      return `ביצעת ${result.count} העברות בין ${result.from} ל־${result.to}.`;
+      return `ביצעת ${result.count} העברות בין ${formatDateForUser(result.from, userLanguage)} ל־${formatDateForUser(result.to, userLanguage)}.`;
     }
 
     if (toolName === 'get_last_transfer') {
@@ -202,7 +202,7 @@ const formatFinancialResponse = (toolName, result, userLanguage) => {
   }
 
   if (toolName === 'count_transfers') {
-    return `You made ${result.count} transfers between ${result.from} and ${result.to}.`;
+    return `You made ${result.count} transfers between ${formatDateForUser(result.from, userLanguage)} and ${formatDateForUser(result.to, userLanguage)}.`;
   }
 
   if (toolName === 'get_last_transfer') {
@@ -260,7 +260,108 @@ const normalizeIntentText = (text) => String(text || '')
   .replace(/ף/g, 'פ')
   .replace(/ץ/g, 'צ')
   // normalize common keyboard/typo variants around "יתרה"
-  .replace(/הייתרה|היתרה|יתרה|יתרת/g, 'יתרה');
+  .replace(/הייתרה|היתרה|יתרה|יתרת/g, 'יתרה')
+  // normalize common month typos
+  .replace(/חוודש|חושד|חודשד/g, 'חודש')
+  .replace(/קודםה|קודמ/g, 'קודם');
+
+const extractTransferLimit = (normalizedText) => {
+  const value = String(normalizedText || '');
+  const digitMatch = value.match(/(?:^|\s)(\d{1,3})(?:\s+)?(?:העברה|העברות|transfer|transfers)/);
+  if (digitMatch) return Math.min(Math.max(Number(digitMatch[1]), 1), 100);
+
+  const hebrewNumbers = [
+    { token: 'אחת', value: 1 },
+    { token: 'אחד', value: 1 },
+    { token: 'שתי', value: 2 },
+    { token: 'שתיים', value: 2 },
+    { token: 'שניים', value: 2 },
+    { token: 'שני', value: 2 },
+    { token: 'שלוש', value: 3 },
+    { token: 'ארבע', value: 4 },
+    { token: 'חמש', value: 5 }
+  ];
+  const found = hebrewNumbers.find((x) => value.includes(`${x.token} העברות`) || value.includes(`${x.token} העברה`));
+  return found ? found.value : null;
+};
+
+const inferRelativeRange = (normalizedText) => {
+  const value = String(normalizedText || '');
+  const betweenMatch = value.match(/בין\s+(.+?)\s+(?:לבין|ל|עד)\s+(.+)$/);
+  if (betweenMatch) {
+    return { from: betweenMatch[1].trim(), to: betweenMatch[2].trim() };
+  }
+
+  const fromUntilMatch = value.match(/(?:מ|מתאריך)\s+(.+?)\s+(?:עד|ועד|to)\s+(.+)$/);
+  if (fromUntilMatch) {
+    return { from: fromUntilMatch[1].trim(), to: fromUntilMatch[2].trim() };
+  }
+
+  if (
+    value.includes('מתחילת החודש שעבר') ||
+    value.includes('מתחילת חודש שעבר') ||
+    value.includes('מתחילת חודש קודם')
+  ) {
+    return { from: 'start of last month' };
+  }
+  if (
+    value.includes('עד סוף החודש שעבר') ||
+    value.includes('עד סוף חודש שעבר') ||
+    value.includes('עד סוף חודש קודם')
+  ) {
+    return { to: 'end of last month' };
+  }
+  if (value.includes('מתחילת החודש') || value.includes('מתחילת חודש') || value.includes('from start of month')) {
+    return { from: 'start of this month' };
+  }
+  if (value.includes('עד סוף החודש') || value.includes('עד סוף חודש') || value.includes('to end of month')) {
+    return { to: 'end of this month' };
+  }
+  if (value.includes('מתחילת השנה') || value.includes('from start of year')) {
+    return { from: 'start of year' };
+  }
+  if (value.includes('עד סוף השנה') || value.includes('to end of year')) {
+    return { to: 'end of year' };
+  }
+
+  if (
+    value.includes('בחודש האחרון') ||
+    value.includes('חודש אחרון') ||
+    value.includes('חודש קודם') ||
+    value.includes('בחודש הקודם') ||
+    value.includes('חודש שעבר') ||
+    value.includes('last month')
+  ) {
+    return { from: 'last month' };
+  }
+  if (
+    value.includes('החודש') ||
+    value.includes('בחודש הזה') ||
+    value.includes('this month')
+  ) {
+    return { from: 'this month' };
+  }
+  return {};
+};
+
+const isRecentTransfersQuery = (normalizedText) => {
+  const value = String(normalizedText || '');
+  const mentionsTransfers = value.includes('העברה') || value.includes('העברות') || value.includes('transfer');
+  const asksForList = [
+    'האחרונות',
+    'אחרונות',
+    'recent',
+    'history',
+    'היסטוריה',
+    'הסטוריה',
+    'תביא',
+    'תראה',
+    'show',
+    'list'
+  ].some((token) => value.includes(token));
+
+  return mentionsTransfers && asksForList;
+};
 
 const isBalanceQuery = (text) => {
   const value = normalizeIntentText(text);
@@ -292,6 +393,7 @@ const isLikelyBankingQuery = (text) => {
 
 const inferToolFromUserInput = (text) => {
   const value = normalizeIntentText(text);
+  const rangeArgs = inferRelativeRange(value);
 
   if (
     value.includes("video") ||
@@ -304,16 +406,12 @@ const inferToolFromUserInput = (text) => {
 
   if (
     value.includes("כמה העברות") ||
+    value.includes("כמה העברה") ||
+    value.includes('לפני חודש כמה') ||
     value.includes("how many transfers") ||
     value.includes("count transfers")
   ) {
-    if (value.includes("last month") || value.includes("בחודש האחרון") || value.includes("חודש אחרון")) {
-      return { name: "count_transfers", args: { from: "last month" } };
-    }
-    if (value.includes("this month") || value.includes("החודש")) {
-      return { name: "count_transfers", args: { from: "this month" } };
-    }
-    return { name: "count_transfers", args: {} };
+    return { name: "count_transfers", args: rangeArgs };
   }
 
   if (
@@ -328,11 +426,14 @@ const inferToolFromUserInput = (text) => {
     value.includes("transfer history") ||
     value.includes("history of transfers") ||
     value.includes("העברות אחרונות") ||
+    value.includes('העברה אחרונה שביצעתי') ||
     value.includes("הסטורית העברות") ||
     value.includes("היסטורית העברות") ||
-    value.includes("היסטוריה של העברות")
+    value.includes("היסטוריה של העברות") ||
+    isRecentTransfersQuery(value)
   ) {
-    return { name: "get_recent_transfers", args: {} };
+    const limit = extractTransferLimit(value);
+    return { name: "get_recent_transfers", args: { ...rangeArgs, ...(limit ? { limit } : {}) } };
   }
 
   if (isBalanceQuery(value)) {
@@ -365,38 +466,45 @@ const inferToolFromUserInput = (text) => {
 
 const inferHighConfidenceTool = (text) => {
   const value = normalizeIntentText(text);
+  const rangeArgs = inferRelativeRange(value);
 
   if (
     value.includes('כמה העברות') ||
+    value.includes('כמה העברה') ||
+    value.includes('לפני חודש כמה') ||
     value.includes('how many transfers') ||
     value.includes('count transfers')
   ) {
-    if (value.includes('last month') || value.includes('בחודש האחרון') || value.includes('חודש אחרון')) {
-      return { name: 'count_transfers', args: { from: 'last month' } };
-    }
-    if (value.includes('this month') || value.includes('החודש')) {
-      return { name: 'count_transfers', args: { from: 'this month' } };
-    }
-    return { name: 'count_transfers', args: {} };
+    return { name: 'count_transfers', args: rangeArgs };
   }
 
   if (
     value.includes('last transfer') ||
-    value.includes('העברה אחרונה')
+    value.includes('העברה אחרונה') ||
+    value.includes('תביא לי את העברה האחרונה') ||
+    value.includes('תביאי לי את העברה האחרונה')
   ) {
+    if (rangeArgs.from === 'last month') {
+      return { name: 'get_recent_transfers', args: { from: 'last month', limit: 1 } };
+    }
     return { name: 'get_last_transfer', args: {} };
   }
 
   if (
+    value.includes('2 העברות האחרונות') ||
+    value.includes('שתי העברות האחרונות') ||
+    value.includes('שני העברות האחרונות') ||
     value.includes('recent transfers') ||
     value.includes('transfer history') ||
     value.includes('history of transfers') ||
     value.includes('העברות אחרונות') ||
     value.includes('הסטורית העברות') ||
     value.includes('היסטורית העברות') ||
-    value.includes('היסטוריה של העברות')
+    value.includes('היסטוריה של העברות') ||
+    isRecentTransfersQuery(value)
   ) {
-    return { name: 'get_recent_transfers', args: {} };
+    const limit = extractTransferLimit(value);
+    return { name: 'get_recent_transfers', args: { ...rangeArgs, ...(limit ? { limit } : {}) } };
   }
 
   if (isBalanceQuery(value)) {
