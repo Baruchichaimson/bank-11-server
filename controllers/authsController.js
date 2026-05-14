@@ -251,12 +251,16 @@ const login = async (req, res) => {
 /* ================= LOGOUT ================= */
 
 const logout = (req, res) => {
-  res.clearCookie(AUTH_COOKIE_NAME, {
-    httpOnly: true,
-    secure: process.env.NODE_ENV === 'production',
-    sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'lax',
-    path: '/'
-  });
+  const cookieOptions = getAuthCookieOptions();
+  const expiredCookieOptions = {
+    ...cookieOptions,
+    expires: new Date(0),
+    maxAge: 0
+  };
+
+  res.clearCookie(AUTH_COOKIE_NAME, expiredCookieOptions);
+  res.cookie(AUTH_COOKIE_NAME, '', expiredCookieOptions);
+
   return res.status(200).json({
     message: 'Logged out successfully'
   });
