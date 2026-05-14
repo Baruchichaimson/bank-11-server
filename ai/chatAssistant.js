@@ -514,6 +514,102 @@ const inferHighConfidenceTool = (text) => {
   return null;
 };
 
+const getLastUserMessage = (history = []) => {
+  for (let i = history.length - 1; i >= 0; i -= 1) {
+    if (history[i]?.role === 'user') return String(history[i]?.content || '');
+  }
+  return '';
+};
+
+const getLastAssistantMessage = (history = []) => {
+  for (let i = history.length - 1; i >= 0; i -= 1) {
+    if (history[i]?.role === 'assistant') return String(history[i]?.content || '');
+  }
+  return '';
+};
+
+const extractFoundTransfersCountFromAssistant = (text) => {
+  const value = String(text || '');
+  const he = value.match(/מצאתי עבורך\s+(\d+)\s+העברות/);
+  if (he) return Number(he[1]);
+  const en = value.match(/i found\s+(\d+)\s+recent transfers/i);
+  if (en) return Number(en[1]);
+  return null;
+};
+
+const extractRequestedCountFromComplaint = (text) => {
+  const value = normalizeIntentText(text);
+  const digitMatch = value.match(/ביקשתי\s+(\d{1,3})/);
+  if (digitMatch) return Number(digitMatch[1]);
+  return extractTransferLimit(value);
+};
+
+const extractPersonNameQuery = (text) => {
+  const value = normalizeIntentText(text);
+  const match = value.match(/(?:מי זה|who is)\s+([^\s?.,!]+)/);
+  return match ? match[1].trim() : '';
+};
+
+const inferFollowupToolFromHistory = (text, history = []) => {
+  const value = normalizeIntentText(text);
+  const rangeArgs = inferRelativeRange(value);
+  const lastUser = normalizeIntentText(getLastUserMessage(history));
+  const lastAssistant = getLastAssistantMessage(history);
+
+  const requestedInCurrent = extractTransferLimit(value);
+  const requestedInPrevious = extractTransferLimit(lastUser);
+  const inheritedLimit = requestedInCurrent || requestedInPrevious;
+
+  if (
+    value.includes('של חודש קודם') ||
+    value.includes('של חודש שעבר') ||
+    value.includes('בחודש קודם') ||
+    value.includes('בחודש שעבר')
+  ) {
+    return {
+      name: 'get_recent_transfers',
+      args: {
+        from: 'last month',
+        ...(inheritedLimit ? { limit: inheritedLimit } : {})
+      }
+    };
+  }
+
+  if (isRecentTransfersQuery(value) && inheritedLimit && Object.keys(rangeArgs).length > 0) {
+    return {
+      name: 'get_recent_transfers',
+      args: { ...rangeArgs, limit: inheritedLimit }
+    };
+  }
+
+  const personName = extractPersonNameQuery(text);
+  if (personName) {
+    return {
+      name: 'get_last_sent_transfer_to_recipient',
+      args: { recipientName: personName }
+    };
+  }
+
+  if (value.includes('אבל ביקשתי')) {
+    return { name: '__complaint_requested_count__', args: {} };
+  }
+
+  if (
+    (value === 'אבל' || value.includes('אבל')) &&
+    (lastAssistant.includes('העברה') || lastAssistant.toLowerCase().includes('transfer'))
+  ) {
+    const lastRange = inferRelativeRange(lastUser);
+    if (Object.keys(lastRange).length > 0 || requestedInPrevious) {
+      return {
+        name: 'get_recent_transfers',
+        args: { ...lastRange, ...(requestedInPrevious ? { limit: requestedInPrevious } : {}) }
+      };
+    }
+  }
+
+  return null;
+};
+
 /* =================================
    Agent Core
 ================================= */
@@ -542,6 +638,7 @@ export const generateAssistantReply = async ({
 
   const shortHistory = history.slice(-MAX_HISTORY);
   const highConfidenceTool = inferHighConfidenceTool(trimmed);
+  const followupTool = inferFollowupToolFromHistory(trimmed, shortHistory);
 
   if (highConfidenceTool) {
     const result = await executeBankTool({
@@ -550,6 +647,47 @@ export const generateAssistantReply = async ({
       userId
     });
     const reply = formatFinancialResponse(highConfidenceTool.name, result, userLanguage);
+    return {
+      reply,
+      nextHistory: [
+        ...shortHistory,
+        { role: 'user', content: trimmed },
+        { role: 'assistant', content: reply }
+      ].slice(-MAX_HISTORY),
+      nextTransferState: transferState,
+      action: null
+    };
+  }
+
+  if (followupTool) {
+    if (followupTool.name === '__complaint_requested_count__') {
+      const requested = extractRequestedCountFromComplaint(trimmed);
+      const found = extractFoundTransfersCountFromAssistant(getLastAssistantMessage(shortHistory));
+      const reply = userLanguage === 'he'
+        ? (requested && found !== null && found < requested
+            ? `בטווח הזמן שביקשת נמצאו רק ${found} העברות, לכן אין לי ${requested} להציג. אפשר להרחיב טווח זמן ואביא יותר.`
+            : 'אם לא הוחזרו מספיק תוצאות, כנראה שאין מספיק העברות בטווח הזמן שנבחר. אפשר להרחיב טווח זמן.')
+        : (requested && found !== null && found < requested
+            ? `Only ${found} transfers were found in that range, so I cannot show ${requested}. You can widen the time range and I will fetch more.`
+            : 'If fewer results were returned, there may not be enough transfers in that date range. You can widen the range.');
+      return {
+        reply,
+        nextHistory: [
+          ...shortHistory,
+          { role: 'user', content: trimmed },
+          { role: 'assistant', content: reply }
+        ].slice(-MAX_HISTORY),
+        nextTransferState: transferState,
+        action: null
+      };
+    }
+
+    const result = await executeBankTool({
+      name: followupTool.name,
+      args: followupTool.args || {},
+      userId
+    });
+    const reply = formatFinancialResponse(followupTool.name, result, userLanguage);
     return {
       reply,
       nextHistory: [
@@ -737,6 +875,14 @@ export const generateAssistantReply = async ({
     let safeReply = containsToolLeak(normalReply)
       ? getOutOfScopeReply(userLanguage)
       : normalReply;
+
+    // Safety lock: for banking queries, never allow free-form factual answers
+    // without a backend tool result. This prevents hallucinated people/amounts.
+    if (isLikelyBankingQuery(trimmed)) {
+      safeReply = userLanguage === 'he'
+        ? 'כדי לתת תשובה מדויקת ובטוחה, צריך שאזהה בקשה ברורה לנתוני חשבון/העברות. נסח בבקשה כך: "מה ההעברה האחרונה שלי בחודש שעבר?" או "תביא 5 העברות אחרונות מהחודש הקודם".'
+        : 'To provide a precise and safe answer, I need a clear account/transfers data request. Try: "What was my last transfer last month?" or "Show 5 recent transfers from last month."';
+    }
 
     if (!safeReply && isLikelyBankingQuery(trimmed)) {
       safeReply = userLanguage === 'he'
