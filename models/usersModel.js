@@ -45,6 +45,14 @@ const verifyUser = async (userId) => {
   );
 };
 
+const bumpTokenVersionById = async (userId) => {
+  return User.findByIdAndUpdate(
+    userId,
+    { $inc: { tokenVersion: 1 } },
+    { new: true }
+  );
+};
+
 export default {
   createUser,
   findUserByEmail,
@@ -54,4 +62,5 @@ export default {
   findUserByVerificationToken,
   findUserByResetToken,
   verifyUser,
+  bumpTokenVersionById,
 };

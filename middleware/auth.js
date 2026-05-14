@@ -90,6 +90,14 @@ export const requireVerifiedUser = async (req, res, next) => {
       });
     }
 
+    const tokenVersionFromJwt = Number(req.user?.tokenVersion || 0);
+    const tokenVersionFromDb = Number(user.tokenVersion || 0);
+    if (tokenVersionFromJwt !== tokenVersionFromDb) {
+      return res.status(401).json({
+        message: 'Session is no longer valid'
+      });
+    }
+
     req.userRecord = user; // full DB user if needed
     next();
 

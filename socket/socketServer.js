@@ -88,8 +88,10 @@ export const initSocketServer = (httpServer) => {
 
       const payload = jwt.verify(token, JWT_SECRET);
       const user = await usersModel.findUserById(payload.userId);
+      const tokenVersionFromJwt = Number(payload?.tokenVersion || 0);
+      const tokenVersionFromDb = Number(user?.tokenVersion || 0);
 
-      if (!user || !user.isVerified) {
+      if (!user || !user.isVerified || tokenVersionFromJwt !== tokenVersionFromDb) {
         return next(new Error('Unauthorized'));
       }
 

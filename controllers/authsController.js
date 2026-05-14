@@ -23,6 +23,18 @@ const getAuthCookieOptions = () => {
   };
 };
 
+const getTokenFromRequest = (req) => {
+  const authHeader = req.headers?.authorization;
+  if (authHeader && typeof authHeader === 'string') {
+    const [scheme, credentials] = authHeader.split(' ');
+    if (scheme === 'Bearer' && credentials) {
+      return credentials.trim();
+    }
+  }
+
+  return req.cookies?.[AUTH_COOKIE_NAME] || null;
+};
+
 /* ================= REGISTER ================= */
 const signup = async (req, res) => {
   try {
@@ -231,6 +243,7 @@ const login = async (req, res) => {
         userId: user._id,
         email: user.email,
         firstName: user.firstName,
+        tokenVersion: Number(user.tokenVersion || 0),
       },
       JWT_SECRET,
       { expiresIn: '1h' }
@@ -250,7 +263,20 @@ const login = async (req, res) => {
 
 /* ================= LOGOUT ================= */
 
-const logout = (req, res) => {
+const logout = async (req, res) => {
+  try {
+    const token = getTokenFromRequest(req);
+    if (token) {
+      const payload = jwt.verify(token, JWT_SECRET);
+      if (payload?.userId) {
+        await usersModel.bumpTokenVersionById(payload.userId);
+      }
+    }
+  } catch (err) {
+    console.error('Failed to revoke token on logout:', err?.message || err);
+    // Ignore token parse errors and continue cookie cleanup.
+  }
+
   const cookieOptions = getAuthCookieOptions();
   const expiredCookieOptions = {
     ...cookieOptions,
