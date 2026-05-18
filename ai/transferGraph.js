@@ -31,6 +31,13 @@ const parseAmount = (text) => {
   return amount;
 };
 
+const parseDescription = (text) => {
+  const value = String(text || '');
+  const match = value.match(/description\s+(.+)$/i);
+  if (!match?.[1]) return '';
+  return String(match[1]).trim();
+};
+
 const isTransferIntent = (text) => {
   const value = String(text || '').toLowerCase().trim();
 
@@ -151,15 +158,26 @@ const processTransferInput = async (state) => {
   let description = state.description || '';
 
   if (nextPhase === TRANSFER_PHASE.IDLE) {
-    return {
-      handled: true,
-      reply: userLanguage === 'he'
-        ? 'פתחתי עבורך טופס העברה קצר בתוך הצ׳אט. מלא פרטים ולחץ שלח.'
-        : 'I opened a quick transfer form in the chat. Fill the details and submit.',
-      action: 'open_money_transfer_inline',
-      ...resetTransferFlow,
-      shouldRunTransfer: false
-    };
+    const parsedEmail = parseEmail(userInput);
+    const parsedAmount = parseAmount(userInput);
+    const parsedDescription = parseDescription(userInput);
+
+    if (parsedEmail && parsedAmount) {
+      receiverEmail = parsedEmail;
+      amount = parsedAmount;
+      description = parsedDescription;
+      nextPhase = TRANSFER_PHASE.AWAIT_CONFIRMATION;
+    } else {
+      return {
+        handled: true,
+        reply: userLanguage === 'he'
+          ? 'פתחתי עבורך טופס העברה קצר בתוך הצ׳אט. מלא פרטים ולחץ שלח.'
+          : 'I opened a quick transfer form in the chat. Fill the details and submit.',
+        action: 'open_money_transfer_inline',
+        ...resetTransferFlow,
+        shouldRunTransfer: false
+      };
+    }
   }
 
   if (nextPhase === TRANSFER_PHASE.COLLECT_RECEIVER) {
