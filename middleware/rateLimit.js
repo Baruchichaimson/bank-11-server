@@ -1,7 +1,7 @@
 import rateLimit from 'express-rate-limit';
 
 const ONE_MINUTE_MS = 60 * 1000;
-const retryMessage = 'יToo many attempts. You can continue trying again in one minute.';
+const retryMessage = 'Too many attempts. You can continue trying again in one minute.';
 
 const normalizeEmail = (value) => String(value || '').trim().toLowerCase();
 

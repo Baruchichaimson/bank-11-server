@@ -115,6 +115,27 @@ const getOutOfScopeReply = (userLanguage) => (
     : 'I can help only with banking topics. Ask about balance, transfers, account status, or opening the video-call/transfer window.'
 );
 
+const appendHistory = (history, userText, assistantText) => (
+  [
+    ...history,
+    { role: 'user', content: userText },
+    { role: 'assistant', content: assistantText }
+  ].slice(-MAX_HISTORY)
+);
+
+const createReplyPayload = ({
+  history,
+  userText,
+  reply,
+  transferState = null,
+  action = null
+}) => ({
+  reply,
+  nextHistory: appendHistory(history, userText, reply),
+  nextTransferState: transferState,
+  action
+});
+
 const formatDateForUser = (isoString, userLanguage) => {
   if (!isoString) return '';
   const d = new Date(isoString);
@@ -610,6 +631,26 @@ const inferFollowupToolFromHistory = (text, history = []) => {
   return null;
 };
 
+const getWindowToolReply = (toolName, userLanguage) => {
+  if (toolName === 'open_video_call_window') {
+    return userLanguage === 'he'
+      ? 'פתחתי עבורך את חלון שיחת הווידאו.'
+      : 'I opened the video call window for you.';
+  }
+  if (toolName === 'open_money_transfer_window') {
+    return userLanguage === 'he'
+      ? 'פתחתי עבורך טופס העברה קצר בתוך הצ׳אט.'
+      : 'I opened a quick transfer form in the chat.';
+  }
+  return '';
+};
+
+const getWindowToolAction = (toolName, toolResult) => {
+  if (toolName === 'open_video_call_window') return toolResult?.action || 'open_video_call';
+  if (toolName === 'open_money_transfer_window') return 'open_money_transfer_inline';
+  return null;
+};
+
 /* =================================
    Agent Core
 ================================= */
@@ -647,16 +688,13 @@ export const generateAssistantReply = async ({
       userId
     });
     const reply = formatFinancialResponse(highConfidenceTool.name, result, userLanguage);
-    return {
+    return createReplyPayload({
+      history: shortHistory,
+      userText: trimmed,
       reply,
-      nextHistory: [
-        ...shortHistory,
-        { role: 'user', content: trimmed },
-        { role: 'assistant', content: reply }
-      ].slice(-MAX_HISTORY),
-      nextTransferState: transferState,
+      transferState,
       action: null
-    };
+    });
   }
 
   if (followupTool) {
@@ -670,16 +708,13 @@ export const generateAssistantReply = async ({
         : (requested && found !== null && found < requested
             ? `Only ${found} transfers were found in that range, so I cannot show ${requested}. You can widen the time range and I will fetch more.`
             : 'If fewer results were returned, there may not be enough transfers in that date range. You can widen the range.');
-      return {
+      return createReplyPayload({
+        history: shortHistory,
+        userText: trimmed,
         reply,
-        nextHistory: [
-          ...shortHistory,
-          { role: 'user', content: trimmed },
-          { role: 'assistant', content: reply }
-        ].slice(-MAX_HISTORY),
-        nextTransferState: transferState,
+        transferState,
         action: null
-      };
+      });
     }
 
     const result = await executeBankTool({
@@ -688,16 +723,13 @@ export const generateAssistantReply = async ({
       userId
     });
     const reply = formatFinancialResponse(followupTool.name, result, userLanguage);
-    return {
+    return createReplyPayload({
+      history: shortHistory,
+      userText: trimmed,
       reply,
-      nextHistory: [
-        ...shortHistory,
-        { role: 'user', content: trimmed },
-        { role: 'assistant', content: reply }
-      ].slice(-MAX_HISTORY),
-      nextTransferState: transferState,
+      transferState,
       action: null
-    };
+    });
   }
 
   const transferFlow = await runTransferGraph({
@@ -708,16 +740,13 @@ export const generateAssistantReply = async ({
   });
 
   if (transferFlow.handled) {
-    return {
+    return createReplyPayload({
+      history: history.slice(-MAX_HISTORY),
+      userText: trimmed,
       reply: transferFlow.reply,
-      nextHistory: [
-        ...history.slice(-MAX_HISTORY),
-        { role: 'user', content: trimmed },
-        { role: 'assistant', content: transferFlow.reply }
-      ].slice(-MAX_HISTORY),
-      nextTransferState: transferFlow.nextTransferState,
+      transferState: transferFlow.nextTransferState,
       action: transferFlow.action || null
-    };
+    });
   }
 
   if (!hasOpenAiKey || !openai) {
@@ -764,50 +793,26 @@ export const generateAssistantReply = async ({
         userId
       });
 
-      if (toolName === 'open_video_call_window') {
-        const reply = userLanguage === 'he'
-          ? 'פתחתי עבורך את חלון שיחת הווידאו.'
-          : 'I opened the video call window for you.';
-        return {
+      if (toolName === 'open_video_call_window' || toolName === 'open_money_transfer_window') {
+        const reply = getWindowToolReply(toolName, userLanguage);
+        return createReplyPayload({
+          history: shortHistory,
+          userText: trimmed,
           reply,
-          nextHistory: [
-            ...shortHistory,
-            { role: 'user', content: trimmed },
-            { role: 'assistant', content: reply }
-          ].slice(-MAX_HISTORY),
-          nextTransferState: transferState,
-          action: result?.action || 'open_video_call'
-        };
-      }
-
-      if (toolName === 'open_money_transfer_window') {
-        const reply = userLanguage === 'he'
-          ? 'פתחתי עבורך טופס העברה קצר בתוך הצ׳אט.'
-          : 'I opened a quick transfer form in the chat.';
-        return {
-          reply,
-          nextHistory: [
-            ...shortHistory,
-            { role: 'user', content: trimmed },
-            { role: 'assistant', content: reply }
-          ].slice(-MAX_HISTORY),
-          nextTransferState: transferState,
-          action: 'open_money_transfer_inline'
-        };
+          transferState,
+          action: getWindowToolAction(toolName, result)
+        });
       }
 
       const reply = formatFinancialResponse(toolName, result, userLanguage);
 
-      return {
+      return createReplyPayload({
+        history: shortHistory,
+        userText: trimmed,
         reply,
-        nextHistory: [
-          ...shortHistory,
-          { role: 'user', content: trimmed },
-          { role: 'assistant', content: reply }
-        ].slice(-MAX_HISTORY),
-        nextTransferState: transferState,
+        transferState,
         action: null
-      };
+      });
     }
 
     // Fallback: if model skipped tool-calls for a banking query, infer and execute the tool directly.
@@ -819,49 +824,25 @@ export const generateAssistantReply = async ({
         userId
       });
 
-      if (inferred.name === 'open_video_call_window') {
-        const reply = userLanguage === 'he'
-          ? 'פתחתי עבורך את חלון שיחת הווידאו.'
-          : 'I opened the video call window for you.';
-        return {
+      if (inferred.name === 'open_video_call_window' || inferred.name === 'open_money_transfer_window') {
+        const reply = getWindowToolReply(inferred.name, userLanguage);
+        return createReplyPayload({
+          history: shortHistory,
+          userText: trimmed,
           reply,
-          nextHistory: [
-            ...shortHistory,
-            { role: 'user', content: trimmed },
-            { role: 'assistant', content: reply }
-          ].slice(-MAX_HISTORY),
-          nextTransferState: transferState,
-          action: result?.action || 'open_video_call'
-        };
-      }
-
-      if (inferred.name === 'open_money_transfer_window') {
-        const reply = userLanguage === 'he'
-          ? 'פתחתי עבורך טופס העברה קצר בתוך הצ׳אט.'
-          : 'I opened a quick transfer form in the chat.';
-        return {
-          reply,
-          nextHistory: [
-            ...shortHistory,
-            { role: 'user', content: trimmed },
-            { role: 'assistant', content: reply }
-          ].slice(-MAX_HISTORY),
-          nextTransferState: transferState,
-          action: 'open_money_transfer_inline'
-        };
+          transferState,
+          action: getWindowToolAction(inferred.name, result)
+        });
       }
 
       const reply = formatFinancialResponse(inferred.name, result, userLanguage);
-      return {
+      return createReplyPayload({
+        history: shortHistory,
+        userText: trimmed,
         reply,
-        nextHistory: [
-          ...shortHistory,
-          { role: 'user', content: trimmed },
-          { role: 'assistant', content: reply }
-        ].slice(-MAX_HISTORY),
-        nextTransferState: transferState,
+        transferState,
         action: null
-      };
+      });
     }
 
     /* ==========================
@@ -890,30 +871,24 @@ export const generateAssistantReply = async ({
         : 'I could not fully parse that request. Please rephrase briefly, for example: "How many transfers did I make in the last month?"';
     }
 
-    return {
+    return createReplyPayload({
+      history: shortHistory,
+      userText: trimmed,
       reply: safeReply,
-      nextHistory: [
-        ...shortHistory,
-        { role: 'user', content: trimmed },
-        { role: 'assistant', content: safeReply }
-      ].slice(-MAX_HISTORY),
-      nextTransferState: transferState,
+      transferState,
       action: null
-    };
+    });
 
   } catch (err) {
     const fallbackReply = userLanguage === 'he'
       ? 'יש כרגע תקלה זמנית בעוזר. נסה שוב בעוד כמה שניות.'
       : 'The assistant is temporarily unavailable. Please try again in a few seconds.';
-    return {
+    return createReplyPayload({
+      history: shortHistory,
+      userText: trimmed,
       reply: fallbackReply,
-      nextHistory: [
-        ...shortHistory,
-        { role: 'user', content: trimmed },
-        { role: 'assistant', content: fallbackReply }
-      ].slice(-MAX_HISTORY),
-      nextTransferState: transferState,
+      transferState,
       action: null
-    };
+    });
   }
 };

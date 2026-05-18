@@ -6,22 +6,24 @@ import {
   findTransactionById,
   findTransactionsWithCounterpartyName
 } from '../models/transactionsModel.js';
+import { assessTransferRisk } from '../ai/riskAssessment.js';
 
 /* ================= CREATE TRANSACTION ================= */
 const createTransaction = async (req, res) => {
   try {
-    const { receiverEmail, amount, description } = req.body;
+    const { receiverEmail, amount, description, riskConfirmed } = req.body;
+    const numericAmount = Number(amount);
     const senderUserId = req.userId;
     const senderEmail = String(req.user?.email || '').toLowerCase().trim();
     const normalizedReceiverEmail = String(receiverEmail || '').toLowerCase().trim();
 
-    if (!normalizedReceiverEmail || !amount) {
+    if (!normalizedReceiverEmail || !Number.isFinite(numericAmount)) {
       return res.status(400).json({
         message: 'receiverEmail and amount are required'
       });
     }
                                                      
-    if (amount <= 0) {
+    if (numericAmount <= 0) {
       return res.status(400).json({
         message: 'Amount must be greater than zero'
       });
@@ -53,10 +55,33 @@ const createTransaction = async (req, res) => {
       return res.status(404).json({ message: 'Account not found' });
     }
 
+    const riskAssessment = await assessTransferRisk({
+      senderEmail,
+      receiverEmail: normalizedReceiverEmail,
+      amount: numericAmount,
+      senderBalance: senderAccount.balance
+    });
+
+    if (numericAmount > 1000 && !riskConfirmed) {
+      return res.status(409).json({
+        message: 'Additional confirmation required for amount above 1000 ILS',
+        requiresAdditionalConfirmation: true,
+        confirmationThreshold: 1000,
+        riskAssessment
+      });
+    }
+
+    if (riskAssessment.requiresReview) {
+      return res.status(403).json({
+        message: 'Transfer blocked for manual review',
+        riskAssessment
+      });
+    }
+
     const transaction = await transferMoney({
       fromAccountId: senderAccount._id,
       toAccountId: receiverAccount._id,
-      amount,
+      amount: numericAmount,
       description
     });
 
@@ -67,6 +92,7 @@ const createTransaction = async (req, res) => {
       message: 'Transaction completed',
       senderBalance: updatedSenderAccount?.balance,
       receiverBalance: updatedReceiverAccount?.balance,
+      riskAssessment,
       transaction
     });
   } catch (err) {
