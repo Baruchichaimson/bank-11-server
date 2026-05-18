@@ -38,6 +38,14 @@ const parseDescription = (text) => {
   return String(match[1]).trim();
 };
 
+const normalizeConfirmationInput = (text) => (
+  String(text || '')
+    .toLowerCase()
+    .replace(/[\u200e\u200f\u202a-\u202e]/g, '')
+    .replace(/[.,!?'"`~:;()[\]{}<>]/g, '')
+    .trim()
+);
+
 const isTransferIntent = (text) => {
   const value = String(text || '').toLowerCase().trim();
 
@@ -70,13 +78,21 @@ const isTransferIntent = (text) => {
 };
 
 const isYes = (text) => {
-  const value = String(text || '').trim().toLowerCase();
-  return ['yes', 'confirm', 'ok', 'approve', 'כן', 'מאשר', 'אשר', 'תאשר'].includes(value);
+  const value = normalizeConfirmationInput(text);
+  return (
+    ['yes', 'confirm', 'ok', 'approve', 'כן', 'מאשר', 'אשר', 'תאשר'].includes(value) ||
+    value.startsWith('yes ') ||
+    value.startsWith('כן ')
+  );
 };
 
 const isNo = (text) => {
-  const value = String(text || '').trim().toLowerCase();
-  return ['no', 'cancel', 'stop', 'לא', 'בטל', 'ביטול'].includes(value);
+  const value = normalizeConfirmationInput(text);
+  return (
+    ['no', 'cancel', 'stop', 'לא', 'בטל', 'ביטול'].includes(value) ||
+    value.startsWith('no ') ||
+    value.startsWith('לא ')
+  );
 };
 
 const buildPrompt = (language, phase) => {
@@ -93,7 +109,7 @@ const buildPrompt = (language, phase) => {
 };
 
 const buildLowBalanceSuggestion = (language, balance) => {
-  if (balance >= 300) return null;
+  if (balance > 300) return null;
   return language === 'he'
     ? `נשארה לך יתרה נמוכה (${balance} ILS). רוצה שאציע אפשרויות להלוואה קצרה או תכנון הוצאות?`
     : `Your remaining balance is low (${balance} ILS). Do you want me to suggest a short loan or spending plan options?`;
@@ -231,8 +247,8 @@ const processTransferInput = async (state) => {
 
   if (nextPhase === TRANSFER_PHASE.AWAIT_CONFIRMATION && !isYes(userInput)) {
     const summary = userLanguage === 'he'
-      ? `לאשר העברה של ${amount} ILS אל ${receiverEmail}${description ? ` עם תיאור: ${description}` : ''}? כתוב "כן" לאישור או "לא" לביטול.`
-      : `Confirm transfer of ${amount} ILS to ${receiverEmail}${description ? ` with description: ${description}` : ''}? Type "yes" to confirm or "no" to cancel.`;
+      ? `אישור העברה\nסכום: ${amount} ILS\nלנמען: ${receiverEmail}${description ? `\nתיאור: ${description}` : ''}\n\nלאשר? כתוב "כן" או "לא".`
+      : `Transfer confirmation\nAmount: ${amount} ILS\nRecipient: ${receiverEmail}${description ? `\nDescription: ${description}` : ''}\n\nConfirm? Type "yes" or "no".`;
 
     return {
       handled: true,
@@ -248,8 +264,8 @@ const processTransferInput = async (state) => {
 
   if (nextPhase === TRANSFER_PHASE.AWAIT_RISK_CONFIRMATION && !isYes(userInput)) {
     const prompt = userLanguage === 'he'
-      ? `זוהתה העברה מעל ${EXTRA_CONFIRMATION_THRESHOLD} ILS. האם לאשר סופית העברה של ${amount} ILS אל ${receiverEmail}? כתוב "כן" או "לא".`
-      : `Transfer above ${EXTRA_CONFIRMATION_THRESHOLD} ILS detected. Final confirmation required for ${amount} ILS to ${receiverEmail}. Type "yes" or "no".`;
+      ? `אימות נוסף נדרש\nהסכום גבוה מ-${EXTRA_CONFIRMATION_THRESHOLD} ILS.\nלאישור סופי של ${amount} ILS אל ${receiverEmail}, כתוב "כן".`
+      : `Additional verification required\nAmount is above ${EXTRA_CONFIRMATION_THRESHOLD} ILS.\nFor final approval of ${amount} ILS to ${receiverEmail}, type "yes".`;
 
     return {
       handled: true,
@@ -267,7 +283,7 @@ const processTransferInput = async (state) => {
     handled: true,
     reply: '',
     action: null,
-    phase,
+    phase: nextPhase,
     receiverEmail,
     amount,
     description,
