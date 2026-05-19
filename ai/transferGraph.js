@@ -41,6 +41,15 @@ const buildOpenTransferFormAction = (language) => ({
   language
 });
 
+const buildHighAmountConfirmAction = (language, amount) => ({
+  type: 'transfer_high_amount_confirm',
+  language,
+  amount: Number(amount || 0),
+  message: language === 'he'
+    ? `הסכום הוא ${formatIls(amount)} ILS (מעל 1000). האם לבצע את ההעברה?`
+    : `The amount is ${formatIls(amount)} ILS (above 1000). Do you want to proceed?`
+});
+
 const parseEmail = (text) => {
   const value = String(text || '').toLowerCase();
   const match = value.match(/[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}/i);
@@ -564,6 +573,18 @@ const evaluateAccountNode = async (state) => {
 
 const riskAssessmentNode = async (state) => {
   const userLanguage = getFlowLanguage(state);
+
+  if (Number(state.amount) > EXTRA_CONFIRMATION_THRESHOLD && !state.riskConfirmationAsked) {
+    return {
+      handled: true,
+      reply: '',
+      action: buildHighAmountConfirmAction(userLanguage, state.amount),
+      phase: TRANSFER_PHASE.AWAIT_CONFIRMATION,
+      riskConfirmationAsked: true,
+      shouldRunTransfer: false
+    };
+  }
+
   const riskAssessment = await assessTransferRisk({
     senderEmail: String(state.senderUser?.email || '').toLowerCase(),
     receiverEmail: String(state.receiverUser?.email || '').toLowerCase(),
@@ -572,25 +593,6 @@ const riskAssessmentNode = async (state) => {
   });
 
   if (riskAssessment.requiresReview) {
-    if (
-      Number(state.amount) > EXTRA_CONFIRMATION_THRESHOLD &&
-      !state.riskConfirmationAsked
-    ) {
-      return {
-        handled: true,
-        reply: userLanguage === 'he'
-          ? `זוהה סיכון גבוה להעברה זו (מעל ${EXTRA_CONFIRMATION_THRESHOLD} ILS). האם להמשיך בכל זאת? כתוב "כן" להמשך או "לא" לביטול.`
-          : `This transfer was marked high risk (above ${EXTRA_CONFIRMATION_THRESHOLD} ILS). Do you want to continue anyway? Type "yes" to continue or "no" to cancel.`,
-        phase: TRANSFER_PHASE.AWAIT_CONFIRMATION,
-        riskConfirmationAsked: true,
-        shouldRunTransfer: false
-      };
-    }
-
-    if (Number(state.amount) > EXTRA_CONFIRMATION_THRESHOLD && state.riskConfirmationAsked) {
-      return { riskAssessment };
-    }
-
     const reasons = riskAssessment.reasons?.join(', ') || 'Policy checks';
     return {
       handled: true,
