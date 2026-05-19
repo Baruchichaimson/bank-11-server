@@ -29,6 +29,18 @@ const getFlowLanguage = (state) => (
 
 const formatIls = (value) => Number(value || 0).toFixed(2);
 
+const buildTransferFormErrorAction = (field, message, language) => ({
+  type: 'transfer_form_error',
+  field,
+  message,
+  language
+});
+
+const buildOpenTransferFormAction = (language) => ({
+  type: 'open_money_transfer_inline',
+  language
+});
+
 const parseEmail = (text) => {
   const value = String(text || '').toLowerCase();
   const match = value.match(/[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}/i);
@@ -217,7 +229,7 @@ const processTransferInput = async (state) => {
       reply: flowLanguage === 'he'
         ? 'פתחתי עבורך טופס העברה חדש בתוך הצ׳אט. מלא פרטים ולחץ שלח.'
         : 'I opened a new transfer form in the chat. Fill the details and submit.',
-      action: 'open_money_transfer_inline',
+      action: buildOpenTransferFormAction(flowLanguage),
       ...resetTransferFlow,
       flowLanguage,
       shouldRunTransfer: false
@@ -267,12 +279,13 @@ const processTransferInput = async (state) => {
       };
     } else {
       if (!parsedEmail && parsedAmount) {
+        const message = userLanguage === 'he'
+          ? 'כתובת האימייל של המקבל לא תקינה. תקן את השדה ונסה שוב.'
+          : 'Recipient email is invalid. Please fix the email field and try again.';
         return {
           handled: true,
-          reply: userLanguage === 'he'
-            ? 'כתובת האימייל של המקבל לא תקינה. תקן את השדה ונסה שוב.'
-            : 'Recipient email is invalid. Please fix the email field and try again.',
-          action: 'open_money_transfer_inline',
+          reply: '',
+          action: buildTransferFormErrorAction('receiverEmail', message, userLanguage),
           phase: TRANSFER_PHASE.COLLECT_RECEIVER,
           receiverEmail: '',
           amount: parsedAmount,
@@ -287,7 +300,7 @@ const processTransferInput = async (state) => {
         reply: userLanguage === 'he'
           ? 'פתחתי עבורך טופס העברה קצר בתוך הצ׳אט. מלא פרטים ולחץ שלח.'
           : 'I opened a quick transfer form in the chat. Fill the details and submit.',
-        action: 'open_money_transfer_inline',
+        action: buildOpenTransferFormAction(userLanguage),
         ...resetTransferFlow,
         flowLanguage,
         shouldRunTransfer: false
@@ -298,12 +311,13 @@ const processTransferInput = async (state) => {
   if (nextPhase === TRANSFER_PHASE.COLLECT_RECEIVER) {
     const parsed = parseEmail(userInput);
     if (!parsed) {
+      const message = userLanguage === 'he'
+        ? 'כתובת האימייל של המקבל לא תקינה. תקן את השדה ונסה שוב.'
+        : 'Recipient email is invalid. Please fix the email field and try again.';
       return {
         handled: true,
-        reply: userLanguage === 'he'
-          ? 'כתובת האימייל של המקבל לא תקינה. תקן את השדה ונסה שוב.'
-          : 'Recipient email is invalid. Please fix the email field and try again.',
-        action: 'open_money_transfer_inline',
+        reply: '',
+        action: buildTransferFormErrorAction('receiverEmail', message, userLanguage),
         phase: TRANSFER_PHASE.COLLECT_RECEIVER,
         receiverEmail,
         amount,
@@ -320,12 +334,13 @@ const processTransferInput = async (state) => {
   if (nextPhase === TRANSFER_PHASE.COLLECT_AMOUNT) {
     const parsed = parseAmount(userInput);
     if (!parsed) {
+      const message = userLanguage === 'he'
+        ? 'הסכום לא תקין. הזן סכום מספרי גדול מ־0.'
+        : 'Amount is invalid. Enter a numeric amount greater than 0.';
       return {
         handled: true,
-        reply: userLanguage === 'he'
-          ? 'הסכום לא תקין. הזן סכום מספרי גדול מ־0.'
-          : 'Amount is invalid. Enter a numeric amount greater than 0.',
-        action: 'open_money_transfer_inline',
+        reply: '',
+        action: buildTransferFormErrorAction('amount', message, userLanguage),
         phase: TRANSFER_PHASE.COLLECT_AMOUNT,
         receiverEmail,
         amount,
@@ -417,10 +432,13 @@ const evaluateAccountNode = async (state) => {
 
     const receiverUser = await usersModel.findUserByEmail(String(state.receiverEmail || '').toLowerCase());
     if (!receiverUser) {
+      const message = userLanguage === 'he'
+        ? 'המשתמש לא קיים במערכת. בדוק את כתובת האימייל ונסה שוב.'
+        : 'Recipient user does not exist. Please check the email and try again.';
       return {
         handled: true,
-        reply: userLanguage === 'he' ? 'לא מצאתי משתמש עם כתובת האימייל הזו.' : 'I could not find a user with that email.',
-        action: 'open_money_transfer_inline',
+        reply: '',
+        action: buildTransferFormErrorAction('receiverEmail', message, userLanguage),
         phase: TRANSFER_PHASE.COLLECT_RECEIVER,
         receiverEmail: '',
         amount: null,
@@ -431,10 +449,13 @@ const evaluateAccountNode = async (state) => {
     }
 
     if (String(receiverUser._id) === String(senderUser._id)) {
+      const message = userLanguage === 'he'
+        ? 'אי אפשר לבצע העברה לעצמך. הזן אימייל של נמען אחר.'
+        : 'You cannot transfer money to yourself. Enter a different recipient email.';
       return {
         handled: true,
-        reply: userLanguage === 'he' ? 'אי אפשר לבצע העברה לעצמך. הזן אימייל אחר.' : 'You cannot transfer to your own account. Provide another email.',
-        action: 'open_money_transfer_inline',
+        reply: '',
+        action: buildTransferFormErrorAction('receiverEmail', message, userLanguage),
         phase: TRANSFER_PHASE.COLLECT_RECEIVER,
         receiverEmail: '',
         amount: null,
@@ -460,12 +481,13 @@ const evaluateAccountNode = async (state) => {
     const requestedAmount = Number(state.amount);
     const senderBalance = Number(senderAccount?.balance || 0);
     if (Number.isFinite(requestedAmount) && requestedAmount > senderBalance) {
+      const message = userLanguage === 'he'
+        ? `אין מספיק יתרה להעברה: ביקשת ${requestedAmount} ILS, יתרה זמינה ${senderBalance} ILS.`
+        : `Insufficient balance: requested ${requestedAmount} ILS, available ${senderBalance} ILS.`;
       return {
         handled: true,
-        reply: userLanguage === 'he'
-          ? `אין לך מספיק יתרה להעברה. ביקשת להעביר ${requestedAmount} ILS, והיתרה הזמינה היא ${senderBalance} ILS.`
-          : `Insufficient balance for this transfer. You requested ${requestedAmount} ILS, and your available balance is ${senderBalance} ILS.`,
-        action: 'open_money_transfer_inline',
+        reply: '',
+        action: buildTransferFormErrorAction('amount', message, userLanguage),
         phase: TRANSFER_PHASE.COLLECT_AMOUNT,
         receiverEmail: String(state.receiverEmail || ''),
         description: String(state.description || ''),
