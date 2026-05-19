@@ -68,6 +68,17 @@ const parseDescription = (text) => {
   return String(match[1]).trim();
 };
 
+const parseTransferPayload = (text) => {
+  const receiverEmail = parseEmail(text);
+  const amount = parseAmount(text);
+  if (!receiverEmail || !amount) return null;
+  return {
+    receiverEmail,
+    amount,
+    description: parseDescription(text)
+  };
+};
+
 const normalizeConfirmationInput = (text) => (
   String(text || '')
     .toLowerCase()
@@ -252,6 +263,24 @@ const processTransferInput = async (state) => {
   let description = state.description || '';
   let riskConfirmationAsked = Boolean(state.riskConfirmationAsked);
   let flowLanguage = state.flowLanguage || userLanguage;
+  const parsedPayload = parseTransferPayload(userInput);
+
+  // If the message already contains full transfer details (common with inline form submit),
+  // run directly without an extra confirmation chat round.
+  if (parsedPayload) {
+    return {
+      handled: true,
+      reply: '',
+      action: null,
+      phase: TRANSFER_PHASE.AWAIT_CONFIRMATION,
+      receiverEmail: parsedPayload.receiverEmail,
+      amount: parsedPayload.amount,
+      description: parsedPayload.description || '',
+      riskConfirmationAsked: false,
+      flowLanguage,
+      shouldRunTransfer: true
+    };
+  }
 
   if (nextPhase === TRANSFER_PHASE.IDLE) {
     flowLanguage = state.userLanguage === 'he' ? 'he' : 'en';
