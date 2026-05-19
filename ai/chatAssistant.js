@@ -6,8 +6,6 @@ import {
 
 import { bankTools, executeBankTool } from './bankingTools.js';
 import { runTransferGraph } from './transferGraph.js';
-import { TRANSFER_PHASE } from './transferState.js';
-import { runBankingGraph } from './bankingGraph.js';
 
 const MAX_HISTORY = 12;
 
@@ -137,22 +135,6 @@ const createReplyPayload = ({
   nextTransferState: transferState,
   action
 });
-
-const ROUTING_TELEMETRY = {
-  llm_router: 0,
-  transfer_graph: 0,
-  tool_call_model: 0,
-  safe_chat_fallback: 0
-};
-
-const recordRoutingDecision = (path) => {
-  const key = String(path || '').trim();
-  if (!key) return;
-  ROUTING_TELEMETRY[key] = (ROUTING_TELEMETRY[key] || 0) + 1;
-  if (process.env.ASSISTANT_ROUTING_DEBUG === 'true') {
-    console.log(`[assistant-routing] ${key}`, ROUTING_TELEMETRY);
-  }
-};
 
 const formatDateForUser = (isoString, userLanguage) => {
   if (!isoString) return '';
@@ -304,6 +286,104 @@ const normalizeIntentText = (text) => String(text || '')
   .replace(/חוודש|חושד|חודשד/g, 'חודש')
   .replace(/קודםה|קודמ/g, 'קודם');
 
+const extractTransferLimit = (normalizedText) => {
+  const value = String(normalizedText || '');
+  const digitMatch = value.match(/(?:^|\s)(\d{1,3})(?:\s+)?(?:העברה|העברות|transfer|transfers)/);
+  if (digitMatch) return Math.min(Math.max(Number(digitMatch[1]), 1), 100);
+
+  const hebrewNumbers = [
+    { token: 'אחת', value: 1 },
+    { token: 'אחד', value: 1 },
+    { token: 'שתי', value: 2 },
+    { token: 'שתיים', value: 2 },
+    { token: 'שניים', value: 2 },
+    { token: 'שני', value: 2 },
+    { token: 'שלוש', value: 3 },
+    { token: 'ארבע', value: 4 },
+    { token: 'חמש', value: 5 }
+  ];
+  const found = hebrewNumbers.find((x) => value.includes(`${x.token} העברות`) || value.includes(`${x.token} העברה`));
+  return found ? found.value : null;
+};
+
+const inferRelativeRange = (normalizedText) => {
+  const value = String(normalizedText || '');
+  const betweenMatch = value.match(/בין\s+(.+?)\s+(?:לבין|ל|עד)\s+(.+)$/);
+  if (betweenMatch) {
+    return { from: betweenMatch[1].trim(), to: betweenMatch[2].trim() };
+  }
+
+  const fromUntilMatch = value.match(/(?:מ|מתאריך)\s+(.+?)\s+(?:עד|ועד|to)\s+(.+)$/);
+  if (fromUntilMatch) {
+    return { from: fromUntilMatch[1].trim(), to: fromUntilMatch[2].trim() };
+  }
+
+  if (
+    value.includes('מתחילת החודש שעבר') ||
+    value.includes('מתחילת חודש שעבר') ||
+    value.includes('מתחילת חודש קודם')
+  ) {
+    return { from: 'start of last month' };
+  }
+  if (
+    value.includes('עד סוף החודש שעבר') ||
+    value.includes('עד סוף חודש שעבר') ||
+    value.includes('עד סוף חודש קודם')
+  ) {
+    return { to: 'end of last month' };
+  }
+  if (value.includes('מתחילת החודש') || value.includes('מתחילת חודש') || value.includes('from start of month')) {
+    return { from: 'start of this month' };
+  }
+  if (value.includes('עד סוף החודש') || value.includes('עד סוף חודש') || value.includes('to end of month')) {
+    return { to: 'end of this month' };
+  }
+  if (value.includes('מתחילת השנה') || value.includes('from start of year')) {
+    return { from: 'start of year' };
+  }
+  if (value.includes('עד סוף השנה') || value.includes('to end of year')) {
+    return { to: 'end of year' };
+  }
+
+  if (
+    value.includes('בחודש האחרון') ||
+    value.includes('חודש אחרון') ||
+    value.includes('חודש קודם') ||
+    value.includes('בחודש הקודם') ||
+    value.includes('חודש שעבר') ||
+    value.includes('last month')
+  ) {
+    return { from: 'last month' };
+  }
+  if (
+    value.includes('החודש') ||
+    value.includes('בחודש הזה') ||
+    value.includes('this month')
+  ) {
+    return { from: 'this month' };
+  }
+  return {};
+};
+
+const isRecentTransfersQuery = (normalizedText) => {
+  const value = String(normalizedText || '');
+  const mentionsTransfers = value.includes('העברה') || value.includes('העברות') || value.includes('transfer');
+  const asksForList = [
+    'האחרונות',
+    'אחרונות',
+    'recent',
+    'history',
+    'היסטוריה',
+    'הסטוריה',
+    'תביא',
+    'תראה',
+    'show',
+    'list'
+  ].some((token) => value.includes(token));
+
+  return mentionsTransfers && asksForList;
+};
+
 const isBalanceQuery = (text) => {
   const value = normalizeIntentText(text);
   return (
@@ -332,76 +412,220 @@ const isLikelyBankingQuery = (text) => {
   ].some((token) => value.includes(token));
 };
 
-const extractEmailToken = (text) => {
-  const value = String(text || '').toLowerCase();
-  const match = value.match(/[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}/i);
-  return match ? match[0].trim() : '';
-};
+const inferToolFromUserInput = (text) => {
+  const value = normalizeIntentText(text);
+  const rangeArgs = inferRelativeRange(value);
 
-const extractAmountToken = (text) => {
-  const raw = String(text || '').replace(/,/g, '.');
-  const explicitMatch = raw.match(/(?:\bamount\b|סכום)\s*[:=]?\s*(\d+(?:\.\d{1,2})?)/i);
-  const standaloneNumbers = [...raw.matchAll(/(^|[^a-z0-9.])(\d+(?:\.\d{1,2})?)(?=$|[^a-z0-9.])/gi)];
-  const token = explicitMatch?.[1] || standaloneNumbers.at(-1)?.[2];
-  if (!token) return null;
-  const amount = Number(token);
-  if (!Number.isFinite(amount) || amount <= 0) return null;
-  return amount;
-};
-
-const hasStructuredTransferPayload = (text) => (
-  Boolean(extractEmailToken(text)) && Number.isFinite(extractAmountToken(text))
-);
-
-const inferHistoryFallbackAction = (text) => {
-  const value = String(text || '').toLowerCase();
-  const range = {};
-  const betweenMatch = value.match(/(?:between|בין)\s+(.+?)\s+(?:and|עד|לבין|to)\s+(.+)$/i);
-  if (betweenMatch) {
-    range.from = betweenMatch[1].trim();
-    range.to = betweenMatch[2].trim();
-  } else {
-    if (value.includes('last month') || value.includes('חודש שעבר') || value.includes('חודש קודם')) {
-      range.from = 'last month';
-    } else if (value.includes('this month') || value.includes('החודש')) {
-      range.from = 'this month';
-    } else if (value.includes('last 30 days') || value.includes('30 יום')) {
-      range.from = 'last 30 days';
-    }
+  if (
+    value.includes("video") ||
+    value.includes("representative") ||
+    value.includes("שיחת וידאו") ||
+    value.includes("נציג")
+  ) {
+    return { name: "open_video_call_window", args: {} };
   }
 
-  const limitMatch = value.match(/(?:^|\s)(\d{1,3})(?:\s+)?(?:transfers|העברות|העברה)/i);
-  const limit = limitMatch ? Math.min(Math.max(Number(limitMatch[1]), 1), 100) : null;
+  if (
+    value.includes("כמה העברות") ||
+    value.includes("כמה העברה") ||
+    value.includes('לפני חודש כמה') ||
+    value.includes("how many transfers") ||
+    value.includes("count transfers")
+  ) {
+    return { name: "count_transfers", args: rangeArgs };
+  }
 
-  const asksCount = (
+  if (
+    value.includes("last transfer") ||
+    value.includes("העברה אחרונה")
+  ) {
+    return { name: "get_last_transfer", args: {} };
+  }
+
+  if (
+    value.includes("recent transfers") ||
+    value.includes("transfer history") ||
+    value.includes("history of transfers") ||
+    value.includes("העברות אחרונות") ||
+    value.includes('העברה אחרונה שביצעתי') ||
+    value.includes("הסטורית העברות") ||
+    value.includes("היסטורית העברות") ||
+    value.includes("היסטוריה של העברות") ||
+    isRecentTransfersQuery(value)
+  ) {
+    const limit = extractTransferLimit(value);
+    return { name: "get_recent_transfers", args: { ...rangeArgs, ...(limit ? { limit } : {}) } };
+  }
+
+  if (isBalanceQuery(value)) {
+    return { name: "get_balance", args: {} };
+  }
+
+  if (
+    value.includes("מי אני") ||
+    value.includes("who am i") ||
+    value.includes("my email") ||
+    value.includes("האימייל שלי")
+  ) {
+    return { name: "get_user_identity", args: {} };
+  }
+
+  if (
+    value.includes("send money") ||
+    value.includes("make transfer") ||
+    value.includes("new transfer") ||
+    value.includes("בצע העברה") ||
+    value.includes("להעביר כסף") ||
+    value.includes("העברה חדשה") ||
+    value.includes("שלח כסף")
+  ) {
+    return { name: "open_money_transfer_window", args: {} };
+  }
+
+  return null;
+};
+
+const inferHighConfidenceTool = (text) => {
+  const value = normalizeIntentText(text);
+  const rangeArgs = inferRelativeRange(value);
+
+  if (
+    value.includes('כמה העברות') ||
+    value.includes('כמה העברה') ||
+    value.includes('לפני חודש כמה') ||
     value.includes('how many transfers') ||
-    value.includes('count transfers') ||
-    value.includes('כמה העברות')
-  );
-  if (asksCount) {
-    return { type: 'tool', name: 'count_transfers', args: { ...range } };
+    value.includes('count transfers')
+  ) {
+    return { name: 'count_transfers', args: rangeArgs };
   }
 
-  const asksLast = value.includes('last transfer') || value.includes('העברה אחרונה');
-  if (asksLast) {
-    if (range.from) {
-      return { type: 'tool', name: 'get_recent_transfers', args: { ...range, limit: 1 } };
+  if (
+    value.includes('last transfer') ||
+    value.includes('העברה אחרונה') ||
+    value.includes('תביא לי את העברה האחרונה') ||
+    value.includes('תביאי לי את העברה האחרונה')
+  ) {
+    if (rangeArgs.from === 'last month') {
+      return { name: 'get_recent_transfers', args: { from: 'last month', limit: 1 } };
     }
-    return { type: 'tool', name: 'get_last_transfer', args: {} };
+    return { name: 'get_last_transfer', args: {} };
   }
 
-  const asksHistory = (
+  if (
+    value.includes('2 העברות האחרונות') ||
+    value.includes('שתי העברות האחרונות') ||
+    value.includes('שני העברות האחרונות') ||
     value.includes('recent transfers') ||
     value.includes('transfer history') ||
+    value.includes('history of transfers') ||
     value.includes('העברות אחרונות') ||
-    value.includes('היסטור')
-  );
-  if (asksHistory || limit || range.from || range.to) {
+    value.includes('הסטורית העברות') ||
+    value.includes('היסטורית העברות') ||
+    value.includes('היסטוריה של העברות') ||
+    isRecentTransfersQuery(value)
+  ) {
+    const limit = extractTransferLimit(value);
+    return { name: 'get_recent_transfers', args: { ...rangeArgs, ...(limit ? { limit } : {}) } };
+  }
+
+  if (isBalanceQuery(value)) {
+    return { name: 'get_balance', args: {} };
+  }
+
+  return null;
+};
+
+const getLastUserMessage = (history = []) => {
+  for (let i = history.length - 1; i >= 0; i -= 1) {
+    if (history[i]?.role === 'user') return String(history[i]?.content || '');
+  }
+  return '';
+};
+
+const getLastAssistantMessage = (history = []) => {
+  for (let i = history.length - 1; i >= 0; i -= 1) {
+    if (history[i]?.role === 'assistant') return String(history[i]?.content || '');
+  }
+  return '';
+};
+
+const extractFoundTransfersCountFromAssistant = (text) => {
+  const value = String(text || '');
+  const he = value.match(/מצאתי עבורך\s+(\d+)\s+העברות/);
+  if (he) return Number(he[1]);
+  const en = value.match(/i found\s+(\d+)\s+recent transfers/i);
+  if (en) return Number(en[1]);
+  return null;
+};
+
+const extractRequestedCountFromComplaint = (text) => {
+  const value = normalizeIntentText(text);
+  const digitMatch = value.match(/ביקשתי\s+(\d{1,3})/);
+  if (digitMatch) return Number(digitMatch[1]);
+  return extractTransferLimit(value);
+};
+
+const extractPersonNameQuery = (text) => {
+  const value = normalizeIntentText(text);
+  const match = value.match(/(?:מי זה|who is)\s+([^\s?.,!]+)/);
+  return match ? match[1].trim() : '';
+};
+
+const inferFollowupToolFromHistory = (text, history = []) => {
+  const value = normalizeIntentText(text);
+  const rangeArgs = inferRelativeRange(value);
+  const lastUser = normalizeIntentText(getLastUserMessage(history));
+  const lastAssistant = getLastAssistantMessage(history);
+
+  const requestedInCurrent = extractTransferLimit(value);
+  const requestedInPrevious = extractTransferLimit(lastUser);
+  const inheritedLimit = requestedInCurrent || requestedInPrevious;
+
+  if (
+    value.includes('של חודש קודם') ||
+    value.includes('של חודש שעבר') ||
+    value.includes('בחודש קודם') ||
+    value.includes('בחודש שעבר')
+  ) {
     return {
-      type: 'tool',
       name: 'get_recent_transfers',
-      args: { ...range, ...(limit ? { limit } : {}) }
+      args: {
+        from: 'last month',
+        ...(inheritedLimit ? { limit: inheritedLimit } : {})
+      }
     };
+  }
+
+  if (isRecentTransfersQuery(value) && inheritedLimit && Object.keys(rangeArgs).length > 0) {
+    return {
+      name: 'get_recent_transfers',
+      args: { ...rangeArgs, limit: inheritedLimit }
+    };
+  }
+
+  const personName = extractPersonNameQuery(text);
+  if (personName) {
+    return {
+      name: 'get_last_sent_transfer_to_recipient',
+      args: { recipientName: personName }
+    };
+  }
+
+  if (value.includes('אבל ביקשתי')) {
+    return { name: '__complaint_requested_count__', args: {} };
+  }
+
+  if (
+    (value === 'אבל' || value.includes('אבל')) &&
+    (lastAssistant.includes('העברה') || lastAssistant.toLowerCase().includes('transfer'))
+  ) {
+    const lastRange = inferRelativeRange(lastUser);
+    if (Object.keys(lastRange).length > 0 || requestedInPrevious) {
+      return {
+        name: 'get_recent_transfers',
+        args: { ...lastRange, ...(requestedInPrevious ? { limit: requestedInPrevious } : {}) }
+      };
+    }
   }
 
   return null;
@@ -427,109 +651,6 @@ const getWindowToolAction = (toolName, toolResult) => {
   return null;
 };
 
-const TOOL_ROUTER_ALLOWED_NAMES = new Set(
-  (bankTools || [])
-    .map((tool) => tool?.function?.name)
-    .filter(Boolean)
-);
-
-const normalizeRouterArgs = (toolName, args) => {
-  const raw = args && typeof args === 'object' ? args : {};
-  if (toolName === 'get_recent_transfers') {
-    const normalized = {};
-    if (raw.from) normalized.from = String(raw.from).trim();
-    if (raw.to) normalized.to = String(raw.to).trim();
-    if (raw.limit !== undefined && raw.limit !== null) {
-      const limit = Number(raw.limit);
-      if (Number.isFinite(limit) && limit > 0) {
-        normalized.limit = Math.min(Math.max(Math.floor(limit), 1), 100);
-      }
-    }
-    return normalized;
-  }
-
-  if (toolName === 'count_transfers') {
-    const normalized = {};
-    if (raw.from) normalized.from = String(raw.from).trim();
-    if (raw.to) normalized.to = String(raw.to).trim();
-    return normalized;
-  }
-
-  if (toolName === 'get_last_sent_transfer_to_recipient') {
-    const recipientName = String(raw.recipientName || '').trim();
-    return recipientName ? { recipientName } : {};
-  }
-
-  return {};
-};
-
-const routeActionFromLLM = async ({ text, history, abortSignal }) => {
-  if (!hasOpenAiKey || !openai) return null;
-
-  try {
-    const response = await createChatCompletion({
-      temperature: 0,
-      messages: [
-        {
-          role: 'system',
-          content: `You are a strict banking action router.
-Return JSON only:
-{
-  "actionType": "tool" | "count_complaint" | "none",
-  "toolName": string | "",
-  "args": object,
-  "requestedCount": number | null,
-  "foundCount": number | null,
-  "confidence": number,
-  "needsClarification": boolean
-}
-Allowed tool names: ${[...TOOL_ROUTER_ALLOWED_NAMES].join(', ')}.
-Rules:
-- Pick a tool only when the user clearly requests bank data/action.
-- For follow-ups like "but I asked for 5", use actionType="count_complaint" with counts if known.
-- If ambiguous or out-of-scope, return empty toolName and needsClarification=true.
-- Never invent arguments not implied by the user/history.
-- Confidence is 0..1.`
-        },
-        ...(history || []).slice(-6),
-        { role: 'user', content: String(text || '') }
-      ],
-      response_format: { type: 'json_object' },
-      abortSignal
-    });
-
-    const content = response?.choices?.[0]?.message?.content;
-    const parsed = parseToolArgs(content);
-    const actionType = String(parsed?.actionType || 'none').trim();
-    const toolName = String(parsed?.toolName || '').trim();
-    const confidence = Number(parsed?.confidence);
-    const needsClarification = Boolean(parsed?.needsClarification);
-    const requestedCount = Number(parsed?.requestedCount);
-    const foundCount = Number(parsed?.foundCount);
-
-    if (!Number.isFinite(confidence) || confidence < 0.65 || needsClarification) return null;
-
-    if (actionType === 'count_complaint') {
-      return {
-        type: 'count_complaint',
-        requestedCount: Number.isFinite(requestedCount) ? requestedCount : null,
-        foundCount: Number.isFinite(foundCount) ? foundCount : null
-      };
-    }
-
-    if (actionType !== 'tool') return null;
-    if (!toolName || !TOOL_ROUTER_ALLOWED_NAMES.has(toolName)) return null;
-
-    return {
-      type: 'tool',
-      name: toolName,
-      args: normalizeRouterArgs(toolName, parsed?.args || {})
-    };
-  } catch {
-    return null;
-  }
-};
-
 /* =================================
    Agent Core
 ================================= */
@@ -544,7 +665,6 @@ export const generateAssistantReply = async ({
 
   const trimmed = String(userInput || '').trim();
   const userLanguage = detectLanguage(trimmed);
-  const transferPhase = transferState?.phase || TRANSFER_PHASE.IDLE;
 
   if (!trimmed) {
     return {
@@ -558,60 +678,29 @@ export const generateAssistantReply = async ({
   }
 
   const shortHistory = history.slice(-MAX_HISTORY);
-  const bankingFlow = await runBankingGraph({
-    userInput: trimmed,
-    userLanguage,
-    userId,
-    transferState
-  });
-  if (bankingFlow.handled) {
+  const highConfidenceTool = inferHighConfidenceTool(trimmed);
+  const followupTool = inferFollowupToolFromHistory(trimmed, shortHistory);
+
+  if (highConfidenceTool) {
+    const result = await executeBankTool({
+      name: highConfidenceTool.name,
+      args: highConfidenceTool.args || {},
+      userId
+    });
+    const reply = formatFinancialResponse(highConfidenceTool.name, result, userLanguage);
     return createReplyPayload({
       history: shortHistory,
       userText: trimmed,
-      reply: bankingFlow.reply,
-      transferState: bankingFlow.nextTransferState,
-      action: bankingFlow.action || null
+      reply,
+      transferState,
+      action: null
     });
   }
 
-  const shouldPrioritizeTransferGraph = (
-    transferPhase !== TRANSFER_PHASE.IDLE ||
-    hasStructuredTransferPayload(trimmed)
-  );
-
-  if (shouldPrioritizeTransferGraph) {
-    const transferFlow = await runTransferGraph({
-      userInput: trimmed,
-      userLanguage,
-      userId,
-      transferState
-    });
-
-    if (transferFlow.handled) {
-      recordRoutingDecision('transfer_graph');
-      return createReplyPayload({
-        history: shortHistory,
-        userText: trimmed,
-        reply: transferFlow.reply,
-        transferState: transferFlow.nextTransferState,
-        action: transferFlow.action || null
-      });
-    }
-  }
-
-  const routedAction = await routeActionFromLLM({
-    text: trimmed,
-    history: shortHistory,
-    abortSignal
-  });
-  if (routedAction) {
-    if (routedAction.type === 'tool' && routedAction.name === 'open_money_transfer_window' && hasStructuredTransferPayload(trimmed)) {
-      // Let the transfer graph execute structured transfer payloads instead of reopening the form.
-    } else {
-    recordRoutingDecision('llm_router');
-    if (routedAction.type === 'count_complaint') {
-      const requested = routedAction.requestedCount;
-      const found = routedAction.foundCount;
+  if (followupTool) {
+    if (followupTool.name === '__complaint_requested_count__') {
+      const requested = extractRequestedCountFromComplaint(trimmed);
+      const found = extractFoundTransfersCountFromAssistant(getLastAssistantMessage(shortHistory));
       const reply = userLanguage === 'he'
         ? (requested && found !== null && found < requested
             ? `בטווח הזמן שביקשת נמצאו רק ${found} העברות, לכן אין לי ${requested} להציג. אפשר להרחיב טווח זמן ואביא יותר.`
@@ -629,41 +718,11 @@ export const generateAssistantReply = async ({
     }
 
     const result = await executeBankTool({
-      name: routedAction.name,
-      args: routedAction.args || {},
+      name: followupTool.name,
+      args: followupTool.args || {},
       userId
     });
-
-    if (routedAction.name === 'open_video_call_window' || routedAction.name === 'open_money_transfer_window') {
-      const reply = getWindowToolReply(routedAction.name, userLanguage);
-      return createReplyPayload({
-        history: shortHistory,
-        userText: trimmed,
-        reply,
-        transferState,
-        action: getWindowToolAction(routedAction.name, result)
-      });
-    }
-
-    const reply = formatFinancialResponse(routedAction.name, result, userLanguage);
-    return createReplyPayload({
-      history: shortHistory,
-      userText: trimmed,
-      reply,
-      transferState,
-      action: null
-    });
-    }
-  }
-
-  const historyFallback = inferHistoryFallbackAction(trimmed);
-  if (historyFallback) {
-    const result = await executeBankTool({
-      name: historyFallback.name,
-      args: historyFallback.args || {},
-      userId
-    });
-    const reply = formatFinancialResponse(historyFallback.name, result, userLanguage);
+    const reply = formatFinancialResponse(followupTool.name, result, userLanguage);
     return createReplyPayload({
       history: shortHistory,
       userText: trimmed,
@@ -681,7 +740,6 @@ export const generateAssistantReply = async ({
   });
 
   if (transferFlow.handled) {
-    recordRoutingDecision('transfer_graph');
     return createReplyPayload({
       history: history.slice(-MAX_HISTORY),
       userText: trimmed,
@@ -724,7 +782,6 @@ export const generateAssistantReply = async ({
     ========================== */
 
     if (toolCalls.length > 0) {
-      recordRoutingDecision('tool_call_model');
 
       const toolCall = toolCalls[0];
       const toolName = toolCall.function.name;
@@ -749,6 +806,36 @@ export const generateAssistantReply = async ({
 
       const reply = formatFinancialResponse(toolName, result, userLanguage);
 
+      return createReplyPayload({
+        history: shortHistory,
+        userText: trimmed,
+        reply,
+        transferState,
+        action: null
+      });
+    }
+
+    // Fallback: if model skipped tool-calls for a banking query, infer and execute the tool directly.
+    const inferred = inferToolFromUserInput(trimmed);
+    if (inferred) {
+      const result = await executeBankTool({
+        name: inferred.name,
+        args: inferred.args,
+        userId
+      });
+
+      if (inferred.name === 'open_video_call_window' || inferred.name === 'open_money_transfer_window') {
+        const reply = getWindowToolReply(inferred.name, userLanguage);
+        return createReplyPayload({
+          history: shortHistory,
+          userText: trimmed,
+          reply,
+          transferState,
+          action: getWindowToolAction(inferred.name, result)
+        });
+      }
+
+      const reply = formatFinancialResponse(inferred.name, result, userLanguage);
       return createReplyPayload({
         history: shortHistory,
         userText: trimmed,
@@ -783,7 +870,6 @@ export const generateAssistantReply = async ({
         ? 'לא הצלחתי להבין את הבקשה עד הסוף. אפשר לנסח מחדש בקצרה, למשל: "כמה העברות ביצעתי בחודש האחרון?"'
         : 'I could not fully parse that request. Please rephrase briefly, for example: "How many transfers did I make in the last month?"';
     }
-    recordRoutingDecision('safe_chat_fallback');
 
     return createReplyPayload({
       history: shortHistory,
