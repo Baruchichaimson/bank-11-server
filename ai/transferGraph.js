@@ -233,20 +233,6 @@ const processTransferInput = async (state) => {
     return { handled: false, reply: '', action: null, phase: TRANSFER_PHASE.IDLE };
   }
 
-  if (phase !== TRANSFER_PHASE.IDLE && isTransferIntent(userInput)) {
-    const flowLanguage = state.userLanguage === 'he' ? 'he' : 'en';
-    return {
-      handled: true,
-      reply: flowLanguage === 'he'
-        ? 'פתחתי עבורך טופס העברה חדש בתוך הצ׳אט. מלא פרטים ולחץ שלח.'
-        : 'I opened a new transfer form in the chat. Fill the details and submit.',
-      action: buildOpenTransferFormAction(flowLanguage),
-      ...resetTransferFlow,
-      flowLanguage,
-      shouldRunTransfer: false
-    };
-  }
-
   if (isNo(userInput)) {
     return {
       handled: true,
@@ -279,6 +265,22 @@ const processTransferInput = async (state) => {
       riskConfirmationAsked: false,
       flowLanguage,
       shouldRunTransfer: true
+    };
+  }
+
+  // Only reopen a new transfer form for generic transfer requests.
+  // A structured payload from the inline form should be processed immediately above.
+  if (phase !== TRANSFER_PHASE.IDLE && isTransferIntent(userInput)) {
+    const nextFlowLanguage = state.userLanguage === 'he' ? 'he' : 'en';
+    return {
+      handled: true,
+      reply: nextFlowLanguage === 'he'
+        ? 'פתחתי עבורך טופס העברה חדש בתוך הצ׳אט. מלא פרטים ולחץ שלח.'
+        : 'I opened a new transfer form in the chat. Fill the details and submit.',
+      action: buildOpenTransferFormAction(nextFlowLanguage),
+      ...resetTransferFlow,
+      flowLanguage: nextFlowLanguage,
+      shouldRunTransfer: false
     };
   }
 
