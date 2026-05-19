@@ -6,6 +6,8 @@ import {
 
 import { bankTools, executeBankTool } from './bankingTools.js';
 import { runTransferGraph } from './transferGraph.js';
+import { TRANSFER_PHASE } from './transferState.js';
+import { runBankingGraph } from './bankingGraph.js';
 
 const MAX_HISTORY = 12;
 
@@ -330,6 +332,81 @@ const isLikelyBankingQuery = (text) => {
   ].some((token) => value.includes(token));
 };
 
+const extractEmailToken = (text) => {
+  const value = String(text || '').toLowerCase();
+  const match = value.match(/[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}/i);
+  return match ? match[0].trim() : '';
+};
+
+const extractAmountToken = (text) => {
+  const raw = String(text || '').replace(/,/g, '.');
+  const explicitMatch = raw.match(/(?:\bamount\b|סכום)\s*[:=]?\s*(\d+(?:\.\d{1,2})?)/i);
+  const standaloneNumbers = [...raw.matchAll(/(^|[^a-z0-9.])(\d+(?:\.\d{1,2})?)(?=$|[^a-z0-9.])/gi)];
+  const token = explicitMatch?.[1] || standaloneNumbers.at(-1)?.[2];
+  if (!token) return null;
+  const amount = Number(token);
+  if (!Number.isFinite(amount) || amount <= 0) return null;
+  return amount;
+};
+
+const hasStructuredTransferPayload = (text) => (
+  Boolean(extractEmailToken(text)) && Number.isFinite(extractAmountToken(text))
+);
+
+const inferHistoryFallbackAction = (text) => {
+  const value = String(text || '').toLowerCase();
+  const range = {};
+  const betweenMatch = value.match(/(?:between|בין)\s+(.+?)\s+(?:and|עד|לבין|to)\s+(.+)$/i);
+  if (betweenMatch) {
+    range.from = betweenMatch[1].trim();
+    range.to = betweenMatch[2].trim();
+  } else {
+    if (value.includes('last month') || value.includes('חודש שעבר') || value.includes('חודש קודם')) {
+      range.from = 'last month';
+    } else if (value.includes('this month') || value.includes('החודש')) {
+      range.from = 'this month';
+    } else if (value.includes('last 30 days') || value.includes('30 יום')) {
+      range.from = 'last 30 days';
+    }
+  }
+
+  const limitMatch = value.match(/(?:^|\s)(\d{1,3})(?:\s+)?(?:transfers|העברות|העברה)/i);
+  const limit = limitMatch ? Math.min(Math.max(Number(limitMatch[1]), 1), 100) : null;
+
+  const asksCount = (
+    value.includes('how many transfers') ||
+    value.includes('count transfers') ||
+    value.includes('כמה העברות')
+  );
+  if (asksCount) {
+    return { type: 'tool', name: 'count_transfers', args: { ...range } };
+  }
+
+  const asksLast = value.includes('last transfer') || value.includes('העברה אחרונה');
+  if (asksLast) {
+    if (range.from) {
+      return { type: 'tool', name: 'get_recent_transfers', args: { ...range, limit: 1 } };
+    }
+    return { type: 'tool', name: 'get_last_transfer', args: {} };
+  }
+
+  const asksHistory = (
+    value.includes('recent transfers') ||
+    value.includes('transfer history') ||
+    value.includes('העברות אחרונות') ||
+    value.includes('היסטור')
+  );
+  if (asksHistory || limit || range.from || range.to) {
+    return {
+      type: 'tool',
+      name: 'get_recent_transfers',
+      args: { ...range, ...(limit ? { limit } : {}) }
+    };
+  }
+
+  return null;
+};
+
 const getWindowToolReply = (toolName, userLanguage) => {
   if (toolName === 'open_video_call_window') {
     return userLanguage === 'he'
@@ -430,7 +507,7 @@ Rules:
     const requestedCount = Number(parsed?.requestedCount);
     const foundCount = Number(parsed?.foundCount);
 
-    if (!Number.isFinite(confidence) || confidence < 0.75 || needsClarification) return null;
+    if (!Number.isFinite(confidence) || confidence < 0.65 || needsClarification) return null;
 
     if (actionType === 'count_complaint') {
       return {
@@ -467,6 +544,7 @@ export const generateAssistantReply = async ({
 
   const trimmed = String(userInput || '').trim();
   const userLanguage = detectLanguage(trimmed);
+  const transferPhase = transferState?.phase || TRANSFER_PHASE.IDLE;
 
   if (!trimmed) {
     return {
@@ -480,12 +558,56 @@ export const generateAssistantReply = async ({
   }
 
   const shortHistory = history.slice(-MAX_HISTORY);
+  const bankingFlow = await runBankingGraph({
+    userInput: trimmed,
+    userLanguage,
+    userId,
+    transferState
+  });
+  if (bankingFlow.handled) {
+    return createReplyPayload({
+      history: shortHistory,
+      userText: trimmed,
+      reply: bankingFlow.reply,
+      transferState: bankingFlow.nextTransferState,
+      action: bankingFlow.action || null
+    });
+  }
+
+  const shouldPrioritizeTransferGraph = (
+    transferPhase !== TRANSFER_PHASE.IDLE ||
+    hasStructuredTransferPayload(trimmed)
+  );
+
+  if (shouldPrioritizeTransferGraph) {
+    const transferFlow = await runTransferGraph({
+      userInput: trimmed,
+      userLanguage,
+      userId,
+      transferState
+    });
+
+    if (transferFlow.handled) {
+      recordRoutingDecision('transfer_graph');
+      return createReplyPayload({
+        history: shortHistory,
+        userText: trimmed,
+        reply: transferFlow.reply,
+        transferState: transferFlow.nextTransferState,
+        action: transferFlow.action || null
+      });
+    }
+  }
+
   const routedAction = await routeActionFromLLM({
     text: trimmed,
     history: shortHistory,
     abortSignal
   });
   if (routedAction) {
+    if (routedAction.type === 'tool' && routedAction.name === 'open_money_transfer_window' && hasStructuredTransferPayload(trimmed)) {
+      // Let the transfer graph execute structured transfer payloads instead of reopening the form.
+    } else {
     recordRoutingDecision('llm_router');
     if (routedAction.type === 'count_complaint') {
       const requested = routedAction.requestedCount;
@@ -524,6 +646,24 @@ export const generateAssistantReply = async ({
     }
 
     const reply = formatFinancialResponse(routedAction.name, result, userLanguage);
+    return createReplyPayload({
+      history: shortHistory,
+      userText: trimmed,
+      reply,
+      transferState,
+      action: null
+    });
+    }
+  }
+
+  const historyFallback = inferHistoryFallbackAction(trimmed);
+  if (historyFallback) {
+    const result = await executeBankTool({
+      name: historyFallback.name,
+      args: historyFallback.args || {},
+      userId
+    });
+    const reply = formatFinancialResponse(historyFallback.name, result, userLanguage);
     return createReplyPayload({
       history: shortHistory,
       userText: trimmed,
