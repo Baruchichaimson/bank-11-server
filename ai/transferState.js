@@ -34,7 +34,9 @@ export const TransferState = Annotation.Root({
   errorMessage: Annotation(),
   riskConfirmationAsked: Annotation(),
   transferIntent: Annotation(),
-  detectedIntent: Annotation()
+  detectedIntent: Annotation(),
+  nluIntent: Annotation(),
+  nluEntities: Annotation()
 });
 
 export const resetTransferFlow = {
@@ -77,7 +79,9 @@ export const buildTransferGraphInitialState = ({
   errorMessage: null,
   riskConfirmationAsked: transferState?.riskConfirmationAsked || false,
   transferIntent: false,
-  detectedIntent: 'unknown'
+  detectedIntent: 'unknown',
+  nluIntent: null,
+  nluEntities: null
 });
 
 export const buildNextTransferState = (result) => ({

@@ -11,6 +11,11 @@ import {
   buildTransferGraphInitialState,
   buildNextTransferState
 } from './transferState.js';
+import {
+  OPENAI_MODEL,
+  hasOpenAiKey,
+  openai
+} from './openaiClient.js';
 
 const EXTRA_CONFIRMATION_THRESHOLD = 1000;
 const RECENT_TRANSACTIONS_LIMIT = 5;
@@ -91,6 +96,105 @@ const parseTransferPayload = (text) => {
     amount,
     description: parseDescription(text)
   };
+};
+
+const parseJsonObject = (text) => {
+  try {
+    return JSON.parse(String(text || '{}'));
+  } catch {
+    return null;
+  }
+};
+
+const coerceIntent = (value) => {
+  const allowed = new Set([
+    'transfer_money',
+    'check_balance',
+    'view_transactions',
+    'account_summary',
+    'general_banking_question'
+  ]);
+  return allowed.has(value) ? value : 'general_banking_question';
+};
+
+const nluClassifyIntent = async (text, language) => {
+  if (!hasOpenAiKey || !openai) return null;
+
+  const prompt = language === 'he'
+    ? 'סווג את הכוונה להודעות בנקאיות. החזר JSON בלבד עם intent.'
+    : 'Classify banking user intent. Return JSON only with intent.';
+
+  try {
+    const response = await openai.chat.completions.create({
+      model: OPENAI_MODEL,
+      temperature: 0,
+      messages: [
+        {
+          role: 'system',
+          content: `${prompt}
+Allowed intents: transfer_money, check_balance, view_transactions, account_summary, general_banking_question.`
+        },
+        { role: 'user', content: String(text || '') }
+      ],
+      response_format: { type: 'json_object' }
+    });
+
+    const content = response?.choices?.[0]?.message?.content;
+    const parsed = parseJsonObject(content);
+    if (!parsed) return null;
+    return { intent: coerceIntent(String(parsed.intent || '').trim()) };
+  } catch {
+    return null;
+  }
+};
+
+const nluExtractTransferEntities = async (text, language) => {
+  if (!hasOpenAiKey || !openai) return null;
+
+  const prompt = language === 'he'
+    ? 'חלץ פרטי העברה מהטקסט. החזר JSON בלבד.'
+    : 'Extract transfer details from text. Return JSON only.';
+
+  try {
+    const response = await openai.chat.completions.create({
+      model: OPENAI_MODEL,
+      temperature: 0,
+      messages: [
+        {
+          role: 'system',
+          content: `${prompt}
+Schema:
+{
+  "receiverEmail": string | "",
+  "amount": number | null,
+  "description": string | "",
+  "wantsTransfer": boolean
+}`
+        },
+        { role: 'user', content: String(text || '') }
+      ],
+      response_format: { type: 'json_object' }
+    });
+
+    const content = response?.choices?.[0]?.message?.content;
+    const parsed = parseJsonObject(content);
+    if (!parsed) return null;
+
+    const receiverEmail = parseEmail(parsed.receiverEmail || '');
+    const amount = Number(parsed.amount);
+    const safeAmount = Number.isFinite(amount) && amount > 0 ? amount : null;
+    const description = String(parsed.description || '').trim();
+    const wantsTransfer = Boolean(parsed.wantsTransfer);
+
+    return {
+      receiverEmail,
+      amount: safeAmount,
+      description,
+      wantsTransfer
+    };
+  } catch {
+    return null;
+  }
 };
 
 const normalizeConfirmationInput = (text) => (
@@ -264,6 +368,7 @@ const processTransferInput = async (state) => {
   let riskConfirmationAsked = Boolean(state.riskConfirmationAsked);
   let flowLanguage = state.flowLanguage || userLanguage;
   const parsedPayload = parseTransferPayload(userInput);
+  const extractedEntities = state.nluEntities || {};
 
   // If the message already contains full transfer details (common with inline form submit),
   // run directly without an extra confirmation chat round.
@@ -276,6 +381,21 @@ const processTransferInput = async (state) => {
       receiverEmail: parsedPayload.receiverEmail,
       amount: parsedPayload.amount,
       description: parsedPayload.description || '',
+      riskConfirmationAsked: false,
+      flowLanguage,
+      shouldRunTransfer: true
+    };
+  }
+
+  if (!parsedPayload && extractedEntities?.wantsTransfer && extractedEntities.receiverEmail && extractedEntities.amount) {
+    return {
+      handled: true,
+      reply: '',
+      action: null,
+      phase: TRANSFER_PHASE.AWAIT_CONFIRMATION,
+      receiverEmail: extractedEntities.receiverEmail,
+      amount: extractedEntities.amount,
+      description: extractedEntities.description || '',
       riskConfirmationAsked: false,
       flowLanguage,
       shouldRunTransfer: true
@@ -303,11 +423,17 @@ const processTransferInput = async (state) => {
     const parsedEmail = parseEmail(userInput);
     const parsedAmount = parseAmount(userInput);
     const parsedDescription = parseDescription(userInput);
+    const nluEmail = extractedEntities.receiverEmail || '';
+    const nluAmount = extractedEntities.amount ?? null;
+    const nluDescription = extractedEntities.description || '';
+    const finalEmail = nluEmail || parsedEmail;
+    const finalAmount = nluAmount || parsedAmount;
+    const finalDescription = nluDescription || parsedDescription;
 
-    if (parsedEmail && parsedAmount) {
-      receiverEmail = parsedEmail;
-      amount = parsedAmount;
-      description = parsedDescription;
+    if (finalEmail && finalAmount) {
+      receiverEmail = finalEmail;
+      amount = finalAmount;
+      description = finalDescription;
       nextPhase = TRANSFER_PHASE.AWAIT_CONFIRMATION;
       riskConfirmationAsked = false;
       return {
@@ -323,7 +449,7 @@ const processTransferInput = async (state) => {
         shouldRunTransfer: true
       };
     } else {
-      if (!parsedEmail && parsedAmount) {
+      if (!finalEmail && finalAmount) {
         const message = userLanguage === 'he'
           ? 'כתובת האימייל של המקבל לא תקינה. תקן את השדה ונסה שוב.'
           : 'Recipient email is invalid. Please fix the email field and try again.';
@@ -333,8 +459,8 @@ const processTransferInput = async (state) => {
           action: buildTransferFormErrorAction('receiverEmail', message, userLanguage),
           phase: TRANSFER_PHASE.COLLECT_RECEIVER,
           receiverEmail: '',
-          amount: parsedAmount,
-          description: parsedDescription || '',
+          amount: finalAmount,
+          description: finalDescription || '',
           flowLanguage,
           shouldRunTransfer: false
         };
@@ -449,15 +575,27 @@ const processTransferInput = async (state) => {
 const findIntentNode = async (state) => {
   const phase = state.phase || TRANSFER_PHASE.IDLE;
   const userInput = String(state.userInput || '').trim();
+  const userLanguage = getFlowLanguage(state);
 
   if (phase !== TRANSFER_PHASE.IDLE) {
-    return { transferIntent: true, detectedIntent: 'transfer_money' };
+    return {
+      transferIntent: true,
+      detectedIntent: 'transfer_money',
+      nluIntent: 'transfer_money'
+    };
   }
 
-  const detectedIntent = classifyIntent(userInput);
+  const nluIntentResult = await nluClassifyIntent(userInput, userLanguage);
+  const detectedIntent = nluIntentResult?.intent || classifyIntent(userInput);
+  const nluEntities = detectedIntent === 'transfer_money'
+    ? await nluExtractTransferEntities(userInput, userLanguage)
+    : null;
+
   return {
     transferIntent: detectedIntent === 'transfer_money',
-    detectedIntent
+    detectedIntent,
+    nluIntent: nluIntentResult?.intent || null,
+    nluEntities
   };
 };
 
