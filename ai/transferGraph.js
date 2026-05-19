@@ -50,6 +50,11 @@ const buildHighAmountConfirmAction = (language, amount) => ({
     : `The amount is ${formatIls(amount)} ILS (above 1000). Do you want to proceed?`
 });
 
+const buildResetTransferFormAction = (language) => ({
+  type: 'reset_transfer_form',
+  language
+});
+
 const parseEmail = (text) => {
   const value = String(text || '').toLowerCase();
   const match = value.match(/[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}/i);
@@ -246,7 +251,7 @@ const processTransferInput = async (state) => {
     return {
       handled: true,
       reply: userLanguage === 'he' ? 'ביטלתי את תהליך ההעברה.' : 'I canceled the transfer flow.',
-      action: null,
+      action: buildResetTransferFormAction(userLanguage),
       ...resetTransferFlow,
       shouldRunTransfer: false
     };
