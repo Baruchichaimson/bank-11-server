@@ -11,6 +11,7 @@ export const TRANSFER_PHASE = {
 export const TransferState = Annotation.Root({
   userInput: Annotation(),
   userLanguage: Annotation(),
+  flowLanguage: Annotation(),
   userId: Annotation(),
   phase: Annotation(),
   receiverEmail: Annotation(),
@@ -41,7 +42,8 @@ export const resetTransferFlow = {
   receiverEmail: '',
   amount: null,
   description: '',
-  riskConfirmationAsked: false
+  riskConfirmationAsked: false,
+  flowLanguage: ''
 };
 
 export const buildTransferGraphInitialState = ({
@@ -52,6 +54,7 @@ export const buildTransferGraphInitialState = ({
 }) => ({
   userInput,
   userLanguage,
+  flowLanguage: transferState?.flowLanguage || (userLanguage === 'he' ? 'he' : 'en'),
   userId,
   phase: transferState?.phase || TRANSFER_PHASE.IDLE,
   receiverEmail: transferState?.receiverEmail || '',
@@ -82,5 +85,6 @@ export const buildNextTransferState = (result) => ({
   receiverEmail: result?.receiverEmail || '',
   amount: result?.amount ?? null,
   description: result?.description || '',
-  riskConfirmationAsked: Boolean(result?.riskConfirmationAsked)
+  riskConfirmationAsked: Boolean(result?.riskConfirmationAsked),
+  flowLanguage: result?.flowLanguage || ''
 });

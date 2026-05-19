@@ -23,6 +23,12 @@ const RISK_RULES_AND_LIMITS = {
   velocityHighCount: 5
 };
 
+const getFlowLanguage = (state) => (
+  state.flowLanguage === 'he' ? 'he' : 'en'
+);
+
+const formatIls = (value) => Number(value || 0).toFixed(2);
+
 const parseEmail = (text) => {
   const value = String(text || '').toLowerCase();
   const match = value.match(/[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}/i);
@@ -30,17 +36,22 @@ const parseEmail = (text) => {
 };
 
 const parseAmount = (text) => {
-  const value = String(text || '').replace(/,/g, '.');
-  const match = value.match(/(\d+(\.\d{1,2})?)/);
-  if (!match) return null;
-  const amount = Number(match[1]);
+  const raw = String(text || '');
+  const explicitMatch = raw.match(
+    /(?:\bamount\b|סכום)\s*[:=]?\s*(\d+(?:[.,]\d{1,2})?)/i
+  );
+  const value = raw.replace(/,/g, '.');
+  const standaloneNumbers = [...value.matchAll(/(^|[^a-z0-9.])(\d+(?:\.\d{1,2})?)(?=$|[^a-z0-9.])/gi)];
+  const numericToken = explicitMatch?.[1] || standaloneNumbers.at(-1)?.[2];
+  if (!numericToken) return null;
+  const amount = Number(String(numericToken).replace(/,/g, '.'));
   if (!Number.isFinite(amount) || amount <= 0) return null;
   return amount;
 };
 
 const parseDescription = (text) => {
   const value = String(text || '');
-  const match = value.match(/description\s+(.+)$/i);
+  const match = value.match(/(?:description|תיאור)\s+(.+)$/i);
   if (!match?.[1]) return '';
   return String(match[1]).trim();
 };
@@ -186,7 +197,7 @@ const buildSafetyTips = (language, amount) => {
 
 const processTransferInput = async (state) => {
   const userInput = String(state.userInput || '').trim();
-  const userLanguage = state.userLanguage === 'he' ? 'he' : 'en';
+  const userLanguage = getFlowLanguage(state);
   const phase = state.phase || TRANSFER_PHASE.IDLE;
 
   if (!userInput) {
@@ -195,6 +206,20 @@ const processTransferInput = async (state) => {
 
   if (!state.transferIntent && phase === TRANSFER_PHASE.IDLE) {
     return { handled: false, reply: '', action: null, phase: TRANSFER_PHASE.IDLE };
+  }
+
+  if (phase !== TRANSFER_PHASE.IDLE && isTransferIntent(userInput)) {
+    const flowLanguage = state.userLanguage === 'he' ? 'he' : 'en';
+    return {
+      handled: true,
+      reply: flowLanguage === 'he'
+        ? 'פתחתי עבורך טופס העברה חדש בתוך הצ׳אט. מלא פרטים ולחץ שלח.'
+        : 'I opened a new transfer form in the chat. Fill the details and submit.',
+      action: 'open_money_transfer_inline',
+      ...resetTransferFlow,
+      flowLanguage,
+      shouldRunTransfer: false
+    };
   }
 
   if (isNo(userInput)) {
@@ -212,8 +237,10 @@ const processTransferInput = async (state) => {
   let amount = state.amount ?? null;
   let description = state.description || '';
   let riskConfirmationAsked = Boolean(state.riskConfirmationAsked);
+  let flowLanguage = state.flowLanguage || userLanguage;
 
   if (nextPhase === TRANSFER_PHASE.IDLE) {
+    flowLanguage = state.userLanguage === 'he' ? 'he' : 'en';
     const parsedEmail = parseEmail(userInput);
     const parsedAmount = parseAmount(userInput);
     const parsedDescription = parseDescription(userInput);
@@ -224,6 +251,18 @@ const processTransferInput = async (state) => {
       description = parsedDescription;
       nextPhase = TRANSFER_PHASE.AWAIT_CONFIRMATION;
       riskConfirmationAsked = false;
+      return {
+        handled: true,
+        reply: '',
+        action: null,
+        phase: nextPhase,
+        receiverEmail,
+        amount,
+        description,
+        riskConfirmationAsked,
+        flowLanguage,
+        shouldRunTransfer: true
+      };
     } else {
       return {
         handled: true,
@@ -232,6 +271,7 @@ const processTransferInput = async (state) => {
           : 'I opened a quick transfer form in the chat. Fill the details and submit.',
         action: 'open_money_transfer_inline',
         ...resetTransferFlow,
+        flowLanguage,
         shouldRunTransfer: false
       };
     }
@@ -248,6 +288,7 @@ const processTransferInput = async (state) => {
         receiverEmail,
         amount,
         description,
+        flowLanguage,
         shouldRunTransfer: false
       };
     }
@@ -267,6 +308,7 @@ const processTransferInput = async (state) => {
         receiverEmail,
         amount,
         description,
+        flowLanguage,
         shouldRunTransfer: false
       };
     }
@@ -291,8 +333,8 @@ const processTransferInput = async (state) => {
 
   if (nextPhase === TRANSFER_PHASE.AWAIT_CONFIRMATION && !isYes(userInput)) {
     const summary = userLanguage === 'he'
-      ? `אישור העברה\nסכום: ${amount} ILS\nלנמען: ${receiverEmail}${description ? `\nתיאור: ${description}` : ''}\n\nלאשר? כתוב "כן" או "לא".`
-      : `Transfer confirmation\nAmount: ${amount} ILS\nRecipient: ${receiverEmail}${description ? `\nDescription: ${description}` : ''}\n\nConfirm? Type "yes" or "no".`;
+      ? `לפני ביצוע ההעברה, נא לאשר את הפרטים:\nסכום: ${amount} ILS\nנמען: ${receiverEmail}${description ? `\nתיאור: ${description}` : ''}\n\nאם הכול נכון כתוב "כן". לביטול כתוב "לא".`
+      : `Before I execute the transfer, please confirm the details:\nAmount: ${amount} ILS\nRecipient: ${receiverEmail}${description ? `\nDescription: ${description}` : ''}\n\nIf everything is correct, type "yes". To cancel, type "no".`;
 
     return {
       handled: true,
@@ -303,6 +345,7 @@ const processTransferInput = async (state) => {
       amount,
       description,
       riskConfirmationAsked,
+      flowLanguage,
       shouldRunTransfer: false
     };
   }
@@ -316,6 +359,7 @@ const processTransferInput = async (state) => {
     amount,
     description,
     riskConfirmationAsked,
+    flowLanguage,
     shouldRunTransfer: true
   };
 };
@@ -337,7 +381,7 @@ const findIntentNode = async (state) => {
 
 const evaluateAccountNode = async (state) => {
   try {
-    const userLanguage = state.userLanguage === 'he' ? 'he' : 'en';
+    const userLanguage = getFlowLanguage(state);
     const senderUser = await usersModel.findUserById(state.userId);
     if (!senderUser) {
       return {
@@ -389,6 +433,21 @@ const evaluateAccountNode = async (state) => {
       };
     }
 
+    const requestedAmount = Number(state.amount);
+    const senderBalance = Number(senderAccount?.balance || 0);
+    if (Number.isFinite(requestedAmount) && requestedAmount > senderBalance) {
+      return {
+        handled: true,
+        reply: userLanguage === 'he'
+          ? `אין לך מספיק יתרה להעברה. ביקשת להעביר ${requestedAmount} ILS, והיתרה הזמינה היא ${senderBalance} ILS.`
+          : `Insufficient balance for this transfer. You requested ${requestedAmount} ILS, and your available balance is ${senderBalance} ILS.`,
+        phase: TRANSFER_PHASE.COLLECT_AMOUNT,
+        amount: null,
+        shouldRunTransfer: false,
+        errorMessage: 'insufficient_funds'
+      };
+    }
+
     const senderEmail = String(senderUser.email || '').toLowerCase();
     const recentTransactions = await Transaction.find({
       $or: [{ fromEmail: senderEmail }, { toEmail: senderEmail }]
@@ -424,20 +483,7 @@ const evaluateAccountNode = async (state) => {
 };
 
 const riskAssessmentNode = async (state) => {
-  const userLanguage = state.userLanguage === 'he' ? 'he' : 'en';
-
-  if (Number(state.amount) > EXTRA_CONFIRMATION_THRESHOLD && !state.riskConfirmationAsked) {
-    return {
-      handled: true,
-      reply: userLanguage === 'he'
-        ? `הסכום גדול מ-${EXTRA_CONFIRMATION_THRESHOLD} ILS. האם זה הסכום שברצונך להעביר? כתוב "כן" כדי להמשיך או "לא" כדי לבטל.`
-        : `Amount is above ${EXTRA_CONFIRMATION_THRESHOLD} ILS. Is this the amount you want to transfer? Type "yes" to continue or "no" to cancel.`,
-      phase: TRANSFER_PHASE.AWAIT_CONFIRMATION,
-      riskConfirmationAsked: true,
-      shouldRunTransfer: false
-    };
-  }
-
+  const userLanguage = getFlowLanguage(state);
   const riskAssessment = await assessTransferRisk({
     senderEmail: String(state.senderUser?.email || '').toLowerCase(),
     receiverEmail: String(state.receiverUser?.email || '').toLowerCase(),
@@ -446,6 +492,25 @@ const riskAssessmentNode = async (state) => {
   });
 
   if (riskAssessment.requiresReview) {
+    if (
+      Number(state.amount) > EXTRA_CONFIRMATION_THRESHOLD &&
+      !state.riskConfirmationAsked
+    ) {
+      return {
+        handled: true,
+        reply: userLanguage === 'he'
+          ? `זוהה סיכון גבוה להעברה זו (מעל ${EXTRA_CONFIRMATION_THRESHOLD} ILS). האם להמשיך בכל זאת? כתוב "כן" להמשך או "לא" לביטול.`
+          : `This transfer was marked high risk (above ${EXTRA_CONFIRMATION_THRESHOLD} ILS). Do you want to continue anyway? Type "yes" to continue or "no" to cancel.`,
+        phase: TRANSFER_PHASE.AWAIT_CONFIRMATION,
+        riskConfirmationAsked: true,
+        shouldRunTransfer: false
+      };
+    }
+
+    if (Number(state.amount) > EXTRA_CONFIRMATION_THRESHOLD && state.riskConfirmationAsked) {
+      return { riskAssessment };
+    }
+
     const reasons = riskAssessment.reasons?.join(', ') || 'Policy checks';
     return {
       handled: true,
@@ -463,7 +528,7 @@ const riskAssessmentNode = async (state) => {
 };
 
 const executeTransferNode = async (state) => {
-  const userLanguage = state.userLanguage === 'he' ? 'he' : 'en';
+  const userLanguage = getFlowLanguage(state);
 
   try {
     const transaction = await transferMoney({
@@ -480,8 +545,8 @@ const executeTransferNode = async (state) => {
       transactionResult: transaction,
       senderAccount: updatedSenderAccount || state.senderAccount,
       reply: userLanguage === 'he'
-        ? `ההעברה בוצעה בהצלחה: ${state.amount} ILS ל־${state.receiverEmail}.`
-        : `Transfer completed: ${state.amount} ILS to ${state.receiverEmail}.`
+        ? `ההעברה בוצעה בהצלחה: ${formatIls(state.amount)} ILS ל־${state.receiverEmail}.`
+        : `Transfer completed: ${formatIls(state.amount)} ILS to ${state.receiverEmail}.`
     };
   } catch (err) {
     return {
@@ -501,7 +566,7 @@ const leverageDataNode = async (state) => {
   if (!state.transferExecuted) return { suggestions: [] };
 
   const suggestions = [];
-  const language = state.userLanguage === 'he' ? 'he' : 'en';
+  const language = getFlowLanguage(state);
 
   const remainingBalance = Number(state.senderAccount?.balance || 0);
   const lowBalanceSuggestion = buildLowBalanceSuggestion(language, remainingBalance);
@@ -529,27 +594,26 @@ const respondNode = async (state) => {
     return state;
   }
 
-  const language = state.userLanguage === 'he' ? 'he' : 'en';
+  const language = getFlowLanguage(state);
   const suggestions = Array.isArray(state.suggestions) ? state.suggestions.filter(Boolean) : [];
   const safetyTips = buildSafetyTips(language, Number(state.amount || 0));
-  const tx = state.transactionResult || {};
 
   const transactionResultBlock = language === 'he'
     ? [
-      'Transaction Result:',
-      `סטטוס: הצליח`,
-      `סכום: ${Number(state.amount || 0)} ILS`,
+      'תוצאת ההעברה',
+      '--------------------',
+      'סטטוס: הצליח',
+      `סכום: ${formatIls(state.amount)} ILS`,
       `נמען: ${state.receiverEmail || '-'}`,
-      `יתרה לאחר העברה: ${Number(state.senderAccount?.balance || 0)} ILS`,
-      `מזהה עסקה: ${tx.id ?? tx._id ?? '-'}`
+      `יתרה חדשה: ${formatIls(state.senderAccount?.balance)} ILS`
     ]
     : [
       'Transaction Result:',
+      '--------------------',
       'Status: Success',
-      `Amount: ${Number(state.amount || 0)} ILS`,
+      `Amount: ${formatIls(state.amount)} ILS`,
       `Recipient: ${state.receiverEmail || '-'}`,
-      `Balance after transfer: ${Number(state.senderAccount?.balance || 0)} ILS`,
-      `Transaction ID: ${tx.id ?? tx._id ?? '-'}`
+      `Balance after transfer: ${formatIls(state.senderAccount?.balance)} ILS`
     ];
 
   const aiSuggestionsBlock = language === 'he'
@@ -561,6 +625,8 @@ const respondNode = async (state) => {
     : ['Safety Tips:', ...safetyTips];
 
   const replyWithSections = [
+    language === 'he' ? 'ההעברה הושלמה בהצלחה' : 'Transfer completed successfully',
+    '',
     ...transactionResultBlock,
     '',
     ...aiSuggestionsBlock,
