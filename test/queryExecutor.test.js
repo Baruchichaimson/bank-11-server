@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { QueryExecutor } from '../ai/execution/queryExecutor.js';
+import { normalizeTimeRange } from '../ai/execution/timeRangeNormalizer.js';
 
 const createTransactionRepositoryStub = () => ({
   countBySemanticQuery: async () => 11,
@@ -35,6 +36,23 @@ test('QueryExecutor routes count aggregation to count operation with normalized 
   assert.equal(result.items, undefined);
   assert.ok(result.from instanceof Date);
   assert.ok(result.to instanceof Date);
+});
+
+test('normalizeTimeRange supports this_month range', () => {
+  const { startDate, endDate, label } = normalizeTimeRange({
+    timeRange: 'this_month',
+    now: new Date('2026-05-21T12:34:56.000Z')
+  });
+
+  assert.equal(label, 'this_month');
+  assert.equal(startDate.getFullYear(), 2026);
+  assert.equal(startDate.getMonth(), 4);
+  assert.equal(startDate.getDate(), 1);
+  assert.equal(startDate.getHours(), 0);
+  assert.equal(endDate.getFullYear(), 2026);
+  assert.equal(endDate.getMonth(), 4);
+  assert.equal(endDate.getDate(), 21);
+  assert.equal(endDate.getHours(), 23);
 });
 
 test('QueryExecutor routes list aggregation to descending list operation', async () => {

@@ -50,5 +50,13 @@ export const normalizeTimeRange = ({ timeRange, now = new Date() } = {}) => {
     };
   }
 
+  if (timeRange === 'this_month') {
+    return {
+      startDate: startOfMonth(current.getFullYear(), current.getMonth()),
+      endDate: endOfDay(current),
+      label: 'this_month'
+    };
+  }
+
   throw new Error(`Unsupported timeRange: ${timeRange}`);
 };

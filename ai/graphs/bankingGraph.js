@@ -56,7 +56,8 @@ const findIntentNode = async (state, config) => {
 
   const detection = await detectIntent({
     userInput: state.userInput,
-    createChatCompletion: config?.configurable?.createChatCompletion
+    createChatCompletion: config?.configurable?.createChatCompletion,
+    abortSignal: config?.configurable?.abortSignal
   });
 
   return {

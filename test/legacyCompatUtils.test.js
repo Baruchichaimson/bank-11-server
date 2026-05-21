@@ -102,6 +102,27 @@ test('interpretStatelessSemanticQuery: transfer count with last month', () => {
   });
 });
 
+test('interpretStatelessSemanticQuery: transfer count with this month', () => {
+  assert.deepEqual(interpretStatelessSemanticQuery('כמה העברות ביצעתי החודש'), {
+    domain: 'transactions',
+    intent: 'transactions_query',
+    action: 'transfer_money',
+    filters: { type: 'transfer' },
+    timeRange: 'this_month',
+    aggregation: 'count',
+    limit: null
+  });
+  assert.deepEqual(interpretStatelessSemanticQuery('כמה העברות עשיתי החודש'), {
+    domain: 'transactions',
+    intent: 'transactions_query',
+    action: 'transfer_money',
+    filters: { type: 'transfer' },
+    timeRange: 'this_month',
+    aggregation: 'count',
+    limit: null
+  });
+});
+
 test('interpretStatelessSemanticQuery: first_n transfer list', () => {
   assert.deepEqual(interpretStatelessSemanticQuery('מה היו 5 ההעברות הראשונות שלי בחודש שעבר'), {
     domain: 'transactions',
@@ -110,6 +131,36 @@ test('interpretStatelessSemanticQuery: first_n transfer list', () => {
     filters: { type: 'transfer' },
     timeRange: 'last_month',
     aggregation: 'first_n',
+    limit: 5
+  });
+});
+
+test('interpretStatelessSemanticQuery: Hebrew ordinal transfer limits', () => {
+  assert.deepEqual(interpretStatelessSemanticQuery('מה הם 2 העברות האחרונות שביצעתי בחודש שעבר?'), {
+    domain: 'transactions',
+    intent: 'transactions_query',
+    action: 'transfer_money',
+    filters: { type: 'transfer' },
+    timeRange: 'last_month',
+    aggregation: 'list',
+    limit: 2
+  });
+  assert.deepEqual(interpretStatelessSemanticQuery('מה הם 2 העברות הראשונות שביצעתי בחודש קודם?'), {
+    domain: 'transactions',
+    intent: 'transactions_query',
+    action: 'transfer_money',
+    filters: { type: 'transfer' },
+    timeRange: 'last_month',
+    aggregation: 'first_n',
+    limit: 2
+  });
+  assert.deepEqual(interpretStatelessSemanticQuery('מה הם 5 העברות האחרונות שביצעתי החודש?'), {
+    domain: 'transactions',
+    intent: 'transactions_query',
+    action: 'transfer_money',
+    filters: { type: 'transfer' },
+    timeRange: 'this_month',
+    aggregation: 'list',
     limit: 5
   });
 });

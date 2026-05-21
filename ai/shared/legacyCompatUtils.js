@@ -21,8 +21,9 @@ export const interpretStatelessSemanticQuery = (text) => {
 
   const hasAny = (tokens = []) => tokens.some((token) => value.includes(token));
   const pickNumber = () => {
-    const match = value.match(/\b(\d{1,3})\b/);
-    return match ? Number(match[1]) : null;
+    const digitMatch = value.match(/(?:^|[^\d])(\d{1,3})(?=$|[^\d])/);
+    if (digitMatch) return Number(digitMatch[1]);
+    return extractTransferLimit(value);
   };
 
   const transferAction = hasAny(['עשיתי העברות', 'ביצעתי העברות', 'העברתי כסף', 'שלחתי כסף', 'העברה', 'העברות']);
@@ -61,6 +62,7 @@ export const interpretStatelessSemanticQuery = (text) => {
   let timeRange = null;
   if (hasAny(['החודש שעבר', 'בחודש שעבר', 'לפני חודש', 'חודש קודם'])) timeRange = 'last_month';
   else if (hasAny(['השבוע שעבר', 'בשבוע שעבר'])) timeRange = 'last_week';
+  else if (hasAny(['החודש', 'בחודש הזה', 'חודש נוכחי', 'this month'])) timeRange = 'this_month';
   else if (hasAny(['היום', 'היומ'])) timeRange = 'today';
 
   let aggregation = null;
@@ -73,8 +75,10 @@ export const interpretStatelessSemanticQuery = (text) => {
       aggregation = 'count';
     } else if (hasAny(['מה היו', 'רשימה'])) {
       aggregation = 'list';
+      limit = pickNumber();
     } else {
       aggregation = 'list';
+      limit = pickNumber();
     }
   }
 
