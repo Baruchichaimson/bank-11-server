@@ -1,59 +1,25 @@
 import { END, START, StateGraph } from '@langchain/langgraph';
 import { BankingState } from '../../state/bankingState.js';
 import {
-  extractFoundTransfersCountFromAssistant,
-  extractRequestedCountFromComplaint,
-  getLastAssistantMessage,
-  inferFollowupToolFromHistory,
-  inferHighConfidenceTool,
-  inferToolFromUserInput
+  interpretStatelessSemanticQuery
 } from '../../shared/legacyCompatUtils.js';
 import { formatFinancialResponse } from '../../shared/responseFormatting.js';
 
-const TRANSACTION_SERVICE_CALLS = {
-  get_recent_transfers: (service, userId, args) => service.getTransactions({ userId, args }),
-  get_last_transfer: (service, userId) => service.getLastTransfer({ userId }),
-  count_transfers: (service, userId, args) => service.countTransfers({ userId, args }),
-  get_last_sent_transfer_to_recipient: (service, userId, args) => service.getTransfersWithCounterparty({ userId, args })
-};
-
 const leverageDataNode = async (state, config) => {
   const services = config?.configurable?.services;
-  const history = state.history || [];
-  const followup = inferFollowupToolFromHistory(state.userInput, history);
-
-  if (followup?.name === '__complaint_requested_count__') {
-    const requested = extractRequestedCountFromComplaint(state.userInput);
-    const found = extractFoundTransfersCountFromAssistant(getLastAssistantMessage(history));
-    const message = state.session.userLanguage === 'he'
-      ? (requested && found !== null && found < requested
-        ? `בטווח הזמן שביקשת נמצאו רק ${found} העברות, לכן אין לי ${requested} להציג. אפשר להרחיב טווח זמן ואביא יותר.`
-        : 'אם לא הוחזרו מספיק תוצאות, כנראה שאין מספיק העברות בטווח הזמן שנבחר. אפשר להרחיב טווח זמן.')
-      : (requested && found !== null && found < requested
-        ? `Only ${found} transfers were found in that range, so I cannot show ${requested}. You can widen the time range and I will fetch more.`
-        : 'If fewer results were returned, there may not be enough transfers in that date range. You can widen the range.');
-
-    return {
-      ...state,
-      workflow: { ...state.workflow, currentPhase: 'Return Response with Suggestions' },
-      execution: { executed: false, result: null },
-      ui: { ...state.ui, message }
-    };
-  }
-
-  const inferred = followup || inferHighConfidenceTool(state.userInput) || inferToolFromUserInput(state.userInput);
-  const toolName = TRANSACTION_SERVICE_CALLS[inferred?.name] ? inferred.name : 'get_recent_transfers';
-  const args = inferred?.args || { limit: 5 };
-  const callService = TRANSACTION_SERVICE_CALLS[toolName];
-  const result = await callService(services.transactionService, state.session.userId, args);
+  const semanticQuery = state.intent?.semanticQuery || interpretStatelessSemanticQuery(state.userInput);
+  const { operation, result } = await services.transactionService.executeStructuredQuery({
+    userId: state.session.userId,
+    query: semanticQuery
+  });
 
   return {
     ...state,
     workflow: { ...state.workflow, currentPhase: 'Return Response with Suggestions' },
     transactions: {
       ...state.transactions,
-      filters: args,
-      transactionType: toolName
+      filters: semanticQuery.filters,
+      transactionType: semanticQuery.action
     },
     execution: {
       executed: true,
@@ -61,7 +27,7 @@ const leverageDataNode = async (state, config) => {
     },
     ui: {
       ...state.ui,
-      message: formatFinancialResponse(toolName, result, state.session.userLanguage),
+      message: formatFinancialResponse(operation, result, state.session.userLanguage),
       suggestions: []
     }
   };

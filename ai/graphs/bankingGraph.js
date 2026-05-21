@@ -1,6 +1,7 @@
 import { END, START, StateGraph } from '@langchain/langgraph';
 import { BankingState, createInitialBankingState } from '../state/bankingState.js';
 import { detectIntent } from '../intents/detectIntent.js';
+import { isTransferControlMessage } from '../intents/queryParser.js';
 import { routeWorkflow } from '../router/workflowRouter.js';
 import { runTransferWorkflow } from './workflows/transferWorkflow.js';
 import { runTransactionsWorkflow } from './workflows/transactionsWorkflow.js';
@@ -20,18 +21,34 @@ const userRequestNode = async (state) => ({
 });
 
 const findIntentNode = async (state, config) => {
-  if (state.transfer.nextTransferState?.phase && state.transfer.nextTransferState.phase !== 'idle') {
-    const detection = { intent: 'transfer_money', confidence: 1 };
+  if (
+    state.transfer.nextTransferState?.phase
+    && state.transfer.nextTransferState.phase !== 'idle'
+    && isTransferControlMessage(state.userInput)
+  ) {
+    const detection = { intent: 'transfer_money', confidence: 1, domain: 'transactions', source: 'current_message_transfer_control' };
     return {
       ...state,
       workflow: { ...state.workflow, currentPhase: 'Find Intent' },
       intent: {
         detectedIntent: detection.intent,
-        confidence: detection.confidence
+        confidence: detection.confidence,
+        domain: detection.domain,
+        semanticQuery: null,
+        source: detection.source
+      },
+      isolation: {
+        ...state.isolation,
+        routing: {
+          ...state.isolation?.routing,
+          intentSource: detection.source,
+          domain: detection.domain,
+          intent: detection.intent
+        }
       },
       audit: {
         ...state.audit,
-        aiDecisions: [...(state.audit?.aiDecisions || []), { ...detection, source: 'active_workflow' }],
+        aiDecisions: [...(state.audit?.aiDecisions || []), detection],
         transitions: [...(state.audit?.transitions || []), 'Find Intent']
       }
     };
@@ -39,9 +56,7 @@ const findIntentNode = async (state, config) => {
 
   const detection = await detectIntent({
     userInput: state.userInput,
-    history: state.history || [],
-    createChatCompletion: config?.configurable?.createChatCompletion,
-    abortSignal: config?.configurable?.abortSignal
+    createChatCompletion: config?.configurable?.createChatCompletion
   });
 
   return {
@@ -49,7 +64,19 @@ const findIntentNode = async (state, config) => {
     workflow: { ...state.workflow, currentPhase: 'Find Intent' },
     intent: {
       detectedIntent: detection.intent,
-      confidence: detection.confidence
+      confidence: detection.confidence,
+      domain: detection.domain || 'unknown',
+      semanticQuery: detection.semanticQuery || null,
+      source: detection.source || 'current_message_only'
+    },
+    isolation: {
+      ...state.isolation,
+      routing: {
+        ...state.isolation?.routing,
+        intentSource: detection.source || 'current_message_only',
+        domain: detection.domain || 'unknown',
+        intent: detection.intent
+      }
     },
     audit: {
       ...state.audit,
@@ -62,7 +89,7 @@ const findIntentNode = async (state, config) => {
 const workflowRouterNode = async (state) => {
   const activeWorkflow = routeWorkflow({
     intent: state.intent.detectedIntent,
-    transferState: state.transfer.nextTransferState
+    domain: state.intent.domain || 'unknown'
   });
   return {
     ...state,

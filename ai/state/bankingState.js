@@ -1,5 +1,6 @@
 import { Annotation } from '@langchain/langgraph';
 import { createBalanceState } from './balanceState.js';
+import { createIsolatedTurnState } from './isolatedConversationState.js';
 import { createPersonalDetailsState } from './personalDetailsState.js';
 import { createSupportState } from './supportState.js';
 import { createTransactionsState } from './transactionsState.js';
@@ -11,6 +12,7 @@ export const BankingState = Annotation.Root({
   userId: Annotation(),
 
   session: Annotation(),
+  isolation: Annotation(),
   intent: Annotation(),
   workflow: Annotation(),
   transfer: Annotation(),
@@ -33,6 +35,7 @@ export const createInitialBankingState = ({ userInput, history = [], userId, use
     userLanguage,
     flowLanguage: transferState?.flowLanguage || userLanguage
   },
+  isolation: createIsolatedTurnState({ userInput, userId, userLanguage }),
   intent: {
     detectedIntent: 'unknown',
     confidence: 0

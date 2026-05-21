@@ -77,6 +77,13 @@ export const formatFinancialResponse = (toolName, result, userLanguage) => {
         .join('\n\n\n');
       return `מצאתי עבורך ${result.items.length} העברות אחרונות בטווח שביקשת:\n\n${rows}`;
     }
+    if (toolName === 'get_first_n_transfers') {
+      if (!result.items?.length) return 'לא נמצאו העברות בטווח התאריכים שביקשת.';
+      const rows = result.items
+        .map((tx, index) => `העברה ${index + 1}\n--------------------\nסכום: ${tx.amount} ILS\nשולח: ${tx.fromEmail}\nמקבל: ${tx.toEmail}\nתאריך: ${formatDateForUser(tx.createdAt, userLanguage)}`)
+        .join('\n\n\n');
+      return `מצאתי עבורך ${result.items.length} העברות ראשונות בטווח שביקשת:\n\n${rows}`;
+    }
   }
 
   if (toolName === 'get_balance') {
@@ -104,6 +111,13 @@ export const formatFinancialResponse = (toolName, result, userLanguage) => {
       .map((tx, index) => `Transfer ${index + 1}\n--------------------\nAmount: ${tx.amount} ILS\nFrom: ${tx.fromEmail}\nTo: ${tx.toEmail}\nDate: ${formatDateForUser(tx.createdAt, userLanguage)}`)
       .join('\n\n\n');
     return `I found ${result.items.length} recent transfers in your requested range:\n\n${rows}`;
+  }
+  if (toolName === 'get_first_n_transfers') {
+    if (!result.items?.length) return 'No transfers were found in the requested date range.';
+    const rows = result.items
+      .map((tx, index) => `Transfer ${index + 1}\n--------------------\nAmount: ${tx.amount} ILS\nFrom: ${tx.fromEmail}\nTo: ${tx.toEmail}\nDate: ${formatDateForUser(tx.createdAt, userLanguage)}`)
+      .join('\n\n\n');
+    return `I found ${result.items.length} earliest transfers in your requested range:\n\n${rows}`;
   }
 
   return 'Data retrieved successfully.';

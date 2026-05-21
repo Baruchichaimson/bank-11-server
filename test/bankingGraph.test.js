@@ -52,3 +52,43 @@ test('banking graph keeps an active transfer workflow without a new LLM intent',
   assert.equal(result.action?.type, 'reset_transfer_form');
   assert.equal(result.nextTransferState?.phase, 'idle');
 });
+
+test('banking graph enforces strict state isolation between name and balance queries', async () => {
+  const isolatedServices = {
+    ...services,
+    profileService: {
+      async getUserProfile() {
+        return { found: true, firstName: 'Jane', lastName: 'Doe', email: 'jane@example.com' };
+      }
+    },
+    accountService: {
+      async getBalance() {
+        return { found: true, balance: 4200, currency: 'ILS', status: 'active' };
+      }
+    }
+  };
+
+  const nameResult = await runBankingGraph({
+    userInput: 'What is my name?',
+    userId: 'user-1',
+    history: [],
+    createChatCompletion: null,
+    services: isolatedServices
+  });
+
+  assert.match(nameResult.reply, /your name is/i);
+
+  const balanceResult = await runBankingGraph({
+    userInput: 'What is my balance?',
+    userId: 'user-1',
+    history: [
+      { role: 'user', content: 'What is my name?' },
+      { role: 'assistant', content: nameResult.reply }
+    ],
+    createChatCompletion: null,
+    services: isolatedServices
+  });
+
+  assert.match(balanceResult.reply, /your current balance is/i);
+  assert.doesNotMatch(balanceResult.reply, /your name is/i);
+});

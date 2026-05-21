@@ -5,10 +5,19 @@ import { createRiskService } from './riskService.js';
 import { createSupportService } from './supportService.js';
 import { createTransactionService } from './transactionService.js';
 
-export const createBusinessServices = ({ bankToolExecutor = executeBankTool } = {}) => ({
-  accountService: createAccountService({ executeBankTool: bankToolExecutor }),
-  transactionService: createTransactionService({ executeBankTool: bankToolExecutor }),
-  supportService: createSupportService({ executeBankTool: bankToolExecutor }),
-  profileService: createProfileService({ executeBankTool: bankToolExecutor }),
-  riskService: createRiskService()
-});
+export const createBusinessServices = ({ bankToolExecutor = executeBankTool } = {}) => {
+  const accountService = createAccountService({ executeBankTool: bankToolExecutor });
+  const profileService = createProfileService({ executeBankTool: bankToolExecutor });
+
+  return {
+    accountService,
+    transactionService: createTransactionService({
+      executeBankTool: bankToolExecutor,
+      accountService,
+      profileService
+    }),
+    supportService: createSupportService({ executeBankTool: bankToolExecutor }),
+    profileService,
+    riskService: createRiskService()
+  };
+};
