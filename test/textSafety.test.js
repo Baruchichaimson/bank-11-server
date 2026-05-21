@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { sanitizeAssistantText, containsToolLeak, getOutOfScopeReply } from '../ai/workflows/textSafety.js';
+import { sanitizeAssistantText, containsToolLeak, getOutOfScopeReply } from '../ai/shared/textSafety.js';
 
 test('sanitizeAssistantText strips function payload', () => {
   const input = 'hello <function name="x">{"name":"get_balance"}</function>';

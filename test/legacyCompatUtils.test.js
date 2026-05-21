@@ -8,7 +8,7 @@ import {
   inferHighConfidenceTool,
   inferToolFromUserInput,
   inferFollowupToolFromHistory
-} from '../ai/workflows/legacyCompatUtils.js';
+} from '../ai/shared/legacyCompatUtils.js';
 
 test('detectLanguage detects Hebrew', () => {
   assert.equal(detectLanguage('מה היתרה שלי'), 'he');

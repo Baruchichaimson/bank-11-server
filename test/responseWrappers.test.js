@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { appendHistory, createReplyPayload, getWindowToolReply, getWindowToolAction } from '../ai/workflows/responseWrappers.js';
+import { appendHistory, createReplyPayload, getWindowToolReply, getWindowToolAction } from '../ai/shared/responseWrappers.js';
 
 test('appendHistory appends conversation pair', () => {
   const out = appendHistory([], 'u', 'a');

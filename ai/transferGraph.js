@@ -23,6 +23,8 @@ const RISK_RULES_AND_LIMITS = {
   velocityHighCount: 5
 };
 
+const getBusinessServices = (config) => config?.configurable?.services || {};
+
 const getFlowLanguage = (state) => (
   state.flowLanguage === 'he' ? 'he' : 'en'
 );
@@ -461,10 +463,13 @@ const findIntentNode = async (state) => {
   };
 };
 
-const evaluateAccountNode = async (state) => {
+const evaluateAccountNode = async (state, config) => {
   try {
+    const services = getBusinessServices(config);
     const userLanguage = getFlowLanguage(state);
-    const senderUser = await usersModel.findUserById(state.userId);
+    const senderUser = services.profileService?.getUserById
+      ? await services.profileService.getUserById(state.userId)
+      : await usersModel.findUserById(state.userId);
     if (!senderUser) {
       return {
         handled: true,
@@ -475,7 +480,9 @@ const evaluateAccountNode = async (state) => {
       };
     }
 
-    const receiverUser = await usersModel.findUserByEmail(String(state.receiverEmail || '').toLowerCase());
+    const receiverUser = services.profileService?.getUserByEmail
+      ? await services.profileService.getUserByEmail(state.receiverEmail)
+      : await usersModel.findUserByEmail(String(state.receiverEmail || '').toLowerCase());
     if (!receiverUser) {
       const message = userLanguage === 'he'
         ? 'המשתמש לא קיים במערכת. בדוק את כתובת האימייל ונסה שוב.'
@@ -510,8 +517,12 @@ const evaluateAccountNode = async (state) => {
       };
     }
 
-    const senderAccount = await accountsModel.findAccountByUserId(senderUser._id);
-    const receiverAccount = await accountsModel.findAccountByUserId(receiverUser._id);
+    const senderAccount = services.accountService?.getAccountByUserId
+      ? await services.accountService.getAccountByUserId(senderUser._id)
+      : await accountsModel.findAccountByUserId(senderUser._id);
+    const receiverAccount = services.accountService?.getAccountByUserId
+      ? await services.accountService.getAccountByUserId(receiverUser._id)
+      : await accountsModel.findAccountByUserId(receiverUser._id);
 
     if (!senderAccount || !receiverAccount) {
       return {
@@ -543,12 +554,17 @@ const evaluateAccountNode = async (state) => {
     }
 
     const senderEmail = String(senderUser.email || '').toLowerCase();
-    const recentTransactions = await Transaction.find({
-      $or: [{ fromEmail: senderEmail }, { toEmail: senderEmail }]
-    })
-      .sort({ createdAt: -1 })
-      .limit(RECENT_TRANSACTIONS_LIMIT)
-      .lean();
+    const recentTransactions = services.transactionService?.getRecentTransactionsByEmail
+      ? await services.transactionService.getRecentTransactionsByEmail({
+        email: senderEmail,
+        limit: RECENT_TRANSACTIONS_LIMIT
+      })
+      : await Transaction.find({
+        $or: [{ fromEmail: senderEmail }, { toEmail: senderEmail }]
+      })
+        .sort({ createdAt: -1 })
+        .limit(RECENT_TRANSACTIONS_LIMIT)
+        .lean();
 
     return {
       senderUser,
@@ -576,7 +592,8 @@ const evaluateAccountNode = async (state) => {
   }
 };
 
-const riskAssessmentNode = async (state) => {
+const riskAssessmentNode = async (state, config) => {
+  const services = getBusinessServices(config);
   const userLanguage = getFlowLanguage(state);
 
   if (Number(state.amount) > EXTRA_CONFIRMATION_THRESHOLD && !state.riskConfirmationAsked) {
@@ -590,12 +607,15 @@ const riskAssessmentNode = async (state) => {
     };
   }
 
-  const riskAssessment = await assessTransferRisk({
+  const riskPayload = {
     senderEmail: String(state.senderUser?.email || '').toLowerCase(),
     receiverEmail: String(state.receiverUser?.email || '').toLowerCase(),
     amount: Number(state.amount),
     senderBalance: state.senderAccount?.balance
-  });
+  };
+  const riskAssessment = services.riskService?.evaluateRisk
+    ? await services.riskService.evaluateRisk(riskPayload)
+    : await assessTransferRisk(riskPayload);
 
   if (riskAssessment.requiresReview) {
     const reasons = riskAssessment.reasons?.join(', ') || 'Policy checks';
@@ -614,18 +634,24 @@ const riskAssessmentNode = async (state) => {
   return { riskAssessment };
 };
 
-const executeTransferNode = async (state) => {
+const executeTransferNode = async (state, config) => {
+  const services = getBusinessServices(config);
   const userLanguage = getFlowLanguage(state);
 
   try {
-    const transaction = await transferMoney({
+    const transferPayload = {
       fromAccountId: state.senderAccount._id,
       toAccountId: state.receiverAccount._id,
       amount: Number(state.amount),
       description: state.description || undefined
-    });
+    };
+    const transaction = services.transactionService?.executeTransfer
+      ? await services.transactionService.executeTransfer(transferPayload)
+      : await transferMoney(transferPayload);
 
-    const updatedSenderAccount = await accountsModel.findAccountById(state.senderAccount._id);
+    const updatedSenderAccount = services.accountService?.findAccountById
+      ? await services.accountService.findAccountById(state.senderAccount._id)
+      : await accountsModel.findAccountById(state.senderAccount._id);
 
     return {
       transferExecuted: true,
@@ -649,9 +675,10 @@ const executeTransferNode = async (state) => {
   }
 };
 
-const leverageDataNode = async (state) => {
+const leverageDataNode = async (state, config) => {
   if (!state.transferExecuted) return { suggestions: [] };
 
+  const services = getBusinessServices(config);
   const suggestions = [];
   const language = getFlowLanguage(state);
 
@@ -660,10 +687,16 @@ const leverageDataNode = async (state) => {
   if (lowBalanceSuggestion) suggestions.push(lowBalanceSuggestion);
 
   const oneMonthAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
-  const monthlyOutgoingCount = await Transaction.countDocuments({
-    fromEmail: String(state.senderUser?.email || '').toLowerCase(),
-    createdAt: { $gte: oneMonthAgo }
-  });
+  const senderEmail = String(state.senderUser?.email || '').toLowerCase();
+  const monthlyOutgoingCount = services.transactionService?.countMonthlyOutgoingTransfers
+    ? await services.transactionService.countMonthlyOutgoingTransfers({
+      email: senderEmail,
+      since: oneMonthAgo
+    })
+    : await Transaction.countDocuments({
+      fromEmail: senderEmail,
+      createdAt: { $gte: oneMonthAgo }
+    });
 
   if (monthlyOutgoingCount >= 10) {
     suggestions.push(
@@ -764,7 +797,8 @@ export const runTransferGraph = async ({
   userInput,
   userLanguage,
   userId,
-  transferState
+  transferState,
+  services
 }) => {
   const result = await transferGraph.invoke(
     buildTransferGraphInitialState({
@@ -772,7 +806,12 @@ export const runTransferGraph = async ({
       userLanguage,
       userId,
       transferState
-    })
+    }),
+    {
+      configurable: {
+        services
+      }
+    }
   );
 
   return {
