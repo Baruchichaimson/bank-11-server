@@ -123,7 +123,7 @@ export const getWindowToolReply = (toolName, userLanguage) => {
 
 export const getWindowToolAction = (toolName, toolResult) => {
   if (toolName === 'open_video_call_window') return toolResult?.action || 'open_video_call';
-  if (toolName === 'open_money_transfer_window') return 'open_money_transfer_inline';
+  if (toolName === 'open_money_transfer_window') return { type: 'open_money_transfer_inline' };
   return null;
 };
 

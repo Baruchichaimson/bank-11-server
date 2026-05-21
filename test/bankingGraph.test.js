@@ -92,3 +92,39 @@ test('banking graph enforces strict state isolation between name and balance que
   assert.match(balanceResult.reply, /your current balance is/i);
   assert.doesNotMatch(balanceResult.reply, /your name is/i);
 });
+
+test('banking graph routes Hebrew transfer requests to transfer form, not transaction history', async () => {
+  const transferServices = {
+    ...services,
+    transactionService: {
+      async openTransferForm() {
+        return { found: true, action: 'open_money_transfer', userId: 'user-1' };
+      },
+      async executeStructuredQuery() {
+        throw new Error('transfer request must not execute transaction history query');
+      }
+    }
+  };
+
+  const directRequest = await runBankingGraph({
+    userInput: 'תבצע לי העברה',
+    userId: 'user-1',
+    history: [],
+    createChatCompletion: null,
+    services: transferServices
+  });
+
+  assert.equal(directRequest.action?.type, 'open_money_transfer_inline');
+  assert.doesNotMatch(directRequest.reply, /מצאתי עבורך/);
+
+  const howToRequest = await runBankingGraph({
+    userInput: 'איך מבצעים העברה?',
+    userId: 'user-1',
+    history: [],
+    createChatCompletion: null,
+    services: transferServices
+  });
+
+  assert.equal(howToRequest.action?.type, 'open_money_transfer_inline');
+  assert.doesNotMatch(howToRequest.reply, /מצאתי עבורך/);
+});

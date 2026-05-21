@@ -20,5 +20,5 @@ test('createReplyPayload returns expected structure', () => {
 test('window helpers map tool names', () => {
   assert.match(getWindowToolReply('open_video_call_window', 'en'), /opened the video call window/i);
   assert.equal(getWindowToolAction('open_video_call_window', {}), 'open_video_call');
-  assert.equal(getWindowToolAction('open_money_transfer_window', {}), 'open_money_transfer_inline');
+  assert.deepEqual(getWindowToolAction('open_money_transfer_window', {}), { type: 'open_money_transfer_inline' });
 });
