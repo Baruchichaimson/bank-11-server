@@ -16,6 +16,79 @@ export const normalizeIntentText = (text) => String(text || '')
   .replace(/חוודש|חושד|חודשד/g, 'חודש')
   .replace(/קודםה|קודמ/g, 'קודם');
 
+export const interpretStatelessSemanticQuery = (text) => {
+  const value = normalizeIntentText(text);
+
+  const hasAny = (tokens = []) => tokens.some((token) => value.includes(token));
+  const pickNumber = () => {
+    const match = value.match(/\b(\d{1,3})\b/);
+    return match ? Number(match[1]) : null;
+  };
+
+  const transferAction = hasAny(['עשיתי העברות', 'ביצעתי העברות', 'העברתי כסף', 'שלחתי כסף', 'העברה', 'העברות']);
+  const withdrawAction = hasAny(['משכתי כסף', 'הוצאתי כסף', 'משיכה', 'משכתי']);
+  const depositAction = hasAny(['הפקדתי כסף', 'הכנסתי כסף', 'הפקדה', 'הפקדתי']);
+
+  const isProfile = hasAny(['מה השמ שלי', 'מה השם שלי', 'מי אני', 'השם שלי', 'name']);
+  const isAccount = hasAny(['יתרה', 'balance', 'מצב חשבון', 'כמה כסף יש לי']);
+  const isTransactions = !isProfile && !isAccount;
+
+  const domain = isProfile ? 'profile' : isAccount ? 'account' : 'transactions';
+  const intent = domain === 'profile'
+    ? (hasAny(['מה השמ שלי', 'מה השם שלי', 'name', 'מי אני']) ? 'get_user_name' : 'get_user_details')
+    : domain === 'account'
+      ? 'get_balance'
+      : 'transactions_query';
+
+  let action = intent;
+  let type = null;
+  if (domain === 'transactions') {
+    if (withdrawAction) {
+      action = 'withdraw_money';
+      type = 'withdraw';
+    } else if (depositAction) {
+      action = 'deposit_money';
+      type = 'deposit';
+    } else if (transferAction) {
+      action = 'transfer_money';
+      type = 'transfer';
+    } else {
+      action = 'transfer_money';
+      type = 'transfer';
+    }
+  }
+
+  let timeRange = null;
+  if (hasAny(['החודש שעבר', 'בחודש שעבר', 'לפני חודש', 'חודש קודם'])) timeRange = 'last_month';
+  else if (hasAny(['השבוע שעבר', 'בשבוע שעבר'])) timeRange = 'last_week';
+  else if (hasAny(['היום', 'היומ'])) timeRange = 'today';
+
+  let aggregation = null;
+  let limit = null;
+  if (domain === 'transactions') {
+    if (value.includes('הראשונות')) {
+      aggregation = 'first_n';
+      limit = pickNumber();
+    } else if (value.includes('כמה')) {
+      aggregation = 'count';
+    } else if (hasAny(['מה היו', 'רשימה'])) {
+      aggregation = 'list';
+    } else {
+      aggregation = 'list';
+    }
+  }
+
+  return {
+    domain,
+    intent,
+    action,
+    filters: { type },
+    timeRange,
+    aggregation,
+    limit
+  };
+};
+
 export const extractTransferLimit = (normalizedText) => {
   const value = String(normalizedText || '');
   const digitMatch = value.match(/(?:^|\s)(\d{1,3})(?:\s+)?(?:העברה|העברות|transfer|transfers)/);

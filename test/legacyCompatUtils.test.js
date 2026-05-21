@@ -7,7 +7,8 @@ import {
   extractTransferLimit,
   inferHighConfidenceTool,
   inferToolFromUserInput,
-  inferFollowupToolFromHistory
+  inferFollowupToolFromHistory,
+  interpretStatelessSemanticQuery
 } from '../ai/shared/legacyCompatUtils.js';
 
 test('detectLanguage detects Hebrew', () => {
@@ -51,4 +52,85 @@ test('inferFollowupToolFromHistory recognizes month follow-up', () => {
   assert.equal(result?.name, 'get_recent_transfers');
   assert.equal(result?.args?.from, 'last month');
   assert.equal(result?.args?.limit, 3);
+});
+
+test('interpretStatelessSemanticQuery: profile name', () => {
+  assert.deepEqual(interpretStatelessSemanticQuery('מה השם שלי'), {
+    domain: 'profile',
+    intent: 'get_user_name',
+    action: 'get_user_name',
+    filters: { type: null },
+    timeRange: null,
+    aggregation: null,
+    limit: null
+  });
+});
+
+test('interpretStatelessSemanticQuery: balance', () => {
+  assert.deepEqual(interpretStatelessSemanticQuery('מה היתרה שלי'), {
+    domain: 'account',
+    intent: 'get_balance',
+    action: 'get_balance',
+    filters: { type: null },
+    timeRange: null,
+    aggregation: null,
+    limit: null
+  });
+});
+
+test('interpretStatelessSemanticQuery: transfer list with last month', () => {
+  assert.deepEqual(interpretStatelessSemanticQuery('עשיתי העברות בחודש שעבר'), {
+    domain: 'transactions',
+    intent: 'transactions_query',
+    action: 'transfer_money',
+    filters: { type: 'transfer' },
+    timeRange: 'last_month',
+    aggregation: 'list',
+    limit: null
+  });
+});
+
+test('interpretStatelessSemanticQuery: transfer count with last month', () => {
+  assert.deepEqual(interpretStatelessSemanticQuery('כמה העברות ביצעתי לפני חודש'), {
+    domain: 'transactions',
+    intent: 'transactions_query',
+    action: 'transfer_money',
+    filters: { type: 'transfer' },
+    timeRange: 'last_month',
+    aggregation: 'count',
+    limit: null
+  });
+});
+
+test('interpretStatelessSemanticQuery: first_n transfer list', () => {
+  assert.deepEqual(interpretStatelessSemanticQuery('מה היו 5 ההעברות הראשונות שלי בחודש שעבר'), {
+    domain: 'transactions',
+    intent: 'transactions_query',
+    action: 'transfer_money',
+    filters: { type: 'transfer' },
+    timeRange: 'last_month',
+    aggregation: 'first_n',
+    limit: 5
+  });
+});
+
+test('interpretStatelessSemanticQuery: withdraw and deposit normalization', () => {
+  assert.deepEqual(interpretStatelessSemanticQuery('כמה משכתי כסף היום'), {
+    domain: 'transactions',
+    intent: 'transactions_query',
+    action: 'withdraw_money',
+    filters: { type: 'withdraw' },
+    timeRange: 'today',
+    aggregation: 'count',
+    limit: null
+  });
+  assert.deepEqual(interpretStatelessSemanticQuery('רשימה של מה שהפקדתי כסף השבוע שעבר'), {
+    domain: 'transactions',
+    intent: 'transactions_query',
+    action: 'deposit_money',
+    filters: { type: 'deposit' },
+    timeRange: 'last_week',
+    aggregation: 'list',
+    limit: null
+  });
 });
