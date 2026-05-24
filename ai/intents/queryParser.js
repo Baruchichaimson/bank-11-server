@@ -32,7 +32,7 @@ const hasAny = (value, tokens) => tokens.some((token) => value.includes(token));
 
 const TRANSFER_CONTROL_TOKENS = [
   'yes', 'no', 'cancel', 'confirm', 'approve',
-  'כן', 'לא', 'בטל', 'אישור', 'מאשר'
+  'כן', 'כנ', 'לא', 'בטל', 'אישור', 'מאשר'
 ];
 
 export const isTransferControlMessage = (userInput) => {
