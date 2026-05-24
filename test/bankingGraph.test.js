@@ -53,6 +53,79 @@ test('banking graph keeps an active transfer workflow without a new LLM intent',
   assert.equal(result.nextTransferState?.phase, 'idle');
 });
 
+test('banking graph executes high amount transfer after additional confirmation', async () => {
+  let executedTransfer = null;
+  const transferServices = {
+    ...services,
+    profileService: {
+      async getUserById() {
+        return { _id: 'sender-1', email: 'sender@example.com' };
+      },
+      async getUserByEmail(email) {
+        return { _id: 'receiver-1', email };
+      }
+    },
+    accountService: {
+      async getAccountByUserId(userId) {
+        return {
+          _id: userId === 'sender-1' ? 'account-sender' : 'account-receiver',
+          balance: userId === 'sender-1' ? 5000 : 250
+        };
+      },
+      async findAccountById() {
+        return { _id: 'account-sender', balance: 3500 };
+      }
+    },
+    transactionService: {
+      async executeTransfer(payload) {
+        executedTransfer = payload;
+        return { _id: 'tx-1', ...payload };
+      },
+      async getRecentTransactionsByEmail() {
+        return [];
+      },
+      async countMonthlyOutgoingTransfers() {
+        return 0;
+      }
+    },
+    riskService: {
+      async evaluateRisk() {
+        return { requiresReview: false, score: 0, level: 'LOW', reasons: [] };
+      }
+    }
+  };
+
+  const request = await runBankingGraph({
+    userInput: 'make transfer to receiver@example.com amount 1500',
+    userId: 'sender-1',
+    history: [],
+    createChatCompletion: null,
+    services: transferServices
+  });
+
+  assert.equal(request.action?.type, 'transfer_high_amount_confirm');
+  assert.equal(request.nextTransferState?.riskConfirmationAsked, true);
+  assert.equal(executedTransfer, null);
+
+  const confirmation = await runBankingGraph({
+    userInput: 'yes',
+    userId: 'sender-1',
+    history: request.nextHistory,
+    transferState: request.nextTransferState,
+    createChatCompletion: null,
+    services: transferServices
+  });
+
+  assert.match(confirmation.reply, /Transfer completed successfully/);
+  assert.equal(confirmation.nextTransferState?.phase, 'idle');
+  assert.deepEqual(executedTransfer, {
+    fromAccountId: 'account-sender',
+    toAccountId: 'account-receiver',
+    amount: 1500,
+    description: undefined
+  });
+});
+
 test('banking graph enforces strict state isolation between name and balance queries', async () => {
   const isolatedServices = {
     ...services,
