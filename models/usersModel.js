@@ -7,7 +7,11 @@ const createUser = async (data) => {
 };
 
 const findUserByEmail = async (email) => {
-  return User.findOne({ email });
+  return User.findOne({ email: String(email || '').toLowerCase().trim() });
+};
+
+const findUserByPhoneNumber = async (phoneNumber) => {
+  return User.findOne({ phoneNumber: String(phoneNumber || '').trim() });
 };
 
 const findVerifiedUserByEmail = async (email) => {
@@ -18,7 +22,7 @@ const findVerifiedUserByEmail = async (email) => {
 };
 
 const findUserByEmailWithPassword = async (email) => {
-  return User.findOne({ email }).select('+password');
+  return User.findOne({ email: String(email || '').toLowerCase().trim() }).select('+password');
 };
 
 const findUserById = async (id) => {
@@ -53,9 +57,25 @@ const bumpTokenVersionById = async (userId) => {
   );
 };
 
+const findExpiredUnverifiedUsers = async (now = new Date()) => {
+  return User.find({
+    isVerified: false,
+    verificationExpires: { $lte: now }
+  }).select('_id');
+};
+
+const deleteExpiredUnverifiedUsersByIds = async (userIds, now = new Date()) => {
+  return User.deleteMany({
+    _id: { $in: userIds },
+    isVerified: false,
+    verificationExpires: { $lte: now }
+  });
+};
+
 export default {
   createUser,
   findUserByEmail,
+  findUserByPhoneNumber,
   findVerifiedUserByEmail,
   findUserByEmailWithPassword,
   findUserById,
@@ -63,4 +83,6 @@ export default {
   findUserByResetToken,
   verifyUser,
   bumpTokenVersionById,
+  findExpiredUnverifiedUsers,
+  deleteExpiredUnverifiedUsersByIds,
 };

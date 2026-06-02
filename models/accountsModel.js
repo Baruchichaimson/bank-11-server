@@ -2,9 +2,10 @@ import { Account } from "../entities/accounts.js";
 
 /* ---------- DB Functions ---------- */
 
-const createAccount = async (userId) => {
+const createAccount = async (userId, status = 'PENDING') => {
   return Account.create({ 
     userId ,
+    status,
     balance : Math.floor(Math.random() * (5000 - 100 + 1)) + 100
   });
 };
@@ -25,9 +26,17 @@ const updateAccountStatus = async (accountId, status) => {
   );
 };
 
+const deletePendingAccountsByUserIds = async (userIds) => {
+  return Account.deleteMany({
+    userId: { $in: userIds },
+    status: 'PENDING'
+  });
+};
+
 export default {
   createAccount,
   findAccountByUserId,
   findAccountById,
   updateAccountStatus,
+  deletePendingAccountsByUserIds,
 };

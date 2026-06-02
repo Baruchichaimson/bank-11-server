@@ -13,6 +13,7 @@ import transactionsRoutes from './routes/transactionsRoutes.js';
 import healthRoutes from './routes/healthRoutes.js';
 import { initSocketServer } from './socket/socketServer.js';
 import { getAllowedOrigins } from './config/corsOrigins.js';
+import { startPendingRegistrationCleanup } from './utils/pendingRegistrationCleanup.js';
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -43,6 +44,7 @@ initSocketServer(server);
 /* ---------- Start server ---------- */
 const startServer = async () => {
   await connectMongoDB();
+  startPendingRegistrationCleanup();
 
   server.listen(PORT, '0.0.0.0', () => {
     console.log(`Server running on port ${PORT}`);

@@ -22,6 +22,7 @@ const userSchema = new mongoose.Schema(
       required: true,
       unique: true,
       lowercase: true,
+      trim: true,
     },
 
     phoneNumber: 
@@ -29,6 +30,7 @@ const userSchema = new mongoose.Schema(
       type: String,
       required: true,
       unique: true,
+      trim: true,
       match: /^[0-9]{9,10}$/,
     },
 

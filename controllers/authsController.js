@@ -11,6 +11,7 @@ import { JWT_SECRET } from '../middleware/auth.js';
 
 const AUTH_COOKIE_NAME = 'access_token';
 const AUTH_COOKIE_MAX_AGE_MS = 60 * 60 * 1000;
+const VERIFICATION_TOKEN_MAX_AGE_MS = 24 * 60 * 60 * 1000;
 
 const getAuthCookieOptions = () => {
   const isProduction = process.env.NODE_ENV === 'production';
@@ -35,62 +36,100 @@ const getTokenFromRequest = (req) => {
   return req.cookies?.[AUTH_COOKIE_NAME] || null;
 };
 
+const normalizeEmail = (email) => String(email || '').toLowerCase().trim();
+const normalizePhoneNumber = (phoneNumber) => String(phoneNumber || '').replace(/[^\d]/g, '');
+const sameMongoId = (left, right) => String(left || '') === String(right || '');
+
 /* ================= REGISTER ================= */
 const signup = async (req, res) => {
   try {
     const { email, password, phoneNumber, firstName, lastName } = req.body;
+    const normalizedEmail = normalizeEmail(email);
+    const normalizedPhoneNumber = normalizePhoneNumber(phoneNumber);
 
     if (!email || !password || !phoneNumber || !firstName || !lastName) {
       return res.status(400).json({ message: 'Missing fields' });
     }
 
-    if (!isValidEmail(email)) {
+    if (!isValidEmail(normalizedEmail)) {
       return res.status(400).json({ message: 'Invalid email format' });
     }
 
-    if (!isValidPhone(phoneNumber)) {
+    if (!isValidPhone(normalizedPhoneNumber)) {
       return res.status(400).json({ message: 'Invalid phone number format' });
     }
 
-    console.log("email to find user:", email);
-    const existingUser = await usersModel.findUserByEmail(email);
-    if (existingUser) {
+    const [existingByEmail, existingByPhone] = await Promise.all([
+      usersModel.findUserByEmail(normalizedEmail),
+      usersModel.findUserByPhoneNumber(normalizedPhoneNumber)
+    ]);
+
+    if (existingByEmail?.isVerified) {
       return res.status(409).json({ message: 'Email already registered' });
     }
-    console.log("password before hash:", password);
+
+    if (existingByPhone?.isVerified) {
+      return res.status(409).json({ message: 'Phone number already registered' });
+    }
+
+    if (
+      existingByEmail &&
+      existingByPhone &&
+      !sameMongoId(existingByEmail._id, existingByPhone._id)
+    ) {
+      return res.status(409).json({
+        message: 'Pending registration conflict. Please try again later or contact support.'
+      });
+    }
+
     const passwordHash = await bcrypt.hash(password, 10);
     const verificationToken = randomUUID();
-    console.log("verfication tokken:", verificationToken);
-    const user = await usersModel.createUser({
-      firstName,
-      lastName,
-      email,
-      phoneNumber,
-      password: passwordHash,
-      isVerified: false,
-      verificationToken,
-      verificationExpires: Date.now() + 24 * 60 * 60 * 1000
+    const verificationExpires = new Date(Date.now() + VERIFICATION_TOKEN_MAX_AGE_MS);
+    const pendingUser = existingByPhone || existingByEmail;
+
+    if (pendingUser) {
+      pendingUser.firstName = String(firstName).trim();
+      pendingUser.lastName = String(lastName).trim();
+      pendingUser.email = normalizedEmail;
+      pendingUser.phoneNumber = normalizedPhoneNumber;
+      pendingUser.password = passwordHash;
+      pendingUser.isVerified = false;
+      pendingUser.verificationToken = verificationToken;
+      pendingUser.verificationExpires = verificationExpires;
+      await pendingUser.save();
+    } else {
+      await usersModel.createUser({
+        firstName: String(firstName).trim(),
+        lastName: String(lastName).trim(),
+        email: normalizedEmail,
+        phoneNumber: normalizedPhoneNumber,
+        password: passwordHash,
+        isVerified: false,
+        verificationToken,
+        verificationExpires
+      });
+    }
+
+    try {
+      await sendVerificationEmail(normalizedEmail, verificationToken);
+    } catch (emailErr) {
+      console.error('Verification email failed:', emailErr?.message || emailErr);
+    }
+
+    return res.status(201).json({
+      message: 'Registration successful. Please verify your email.'
     });
-
-try {
-  await accountsModel.createAccount(user._id);
-} catch (accountErr) {
-  console.error('Create account failed:', accountErr?.message || accountErr);
-}
-
-try {
-  await sendVerificationEmail(email, verificationToken);
-} catch (emailErr) {
-  console.error('Verification email failed:', emailErr?.message || emailErr);
-}
-
-return res.status(201).json({
-  message: 'Registration successful. Please verify your email.'
-});
-
-
   } catch (err) {
     console.error(err);
+    if (err?.code === 11000) {
+      const duplicatedField = Object.keys(err.keyPattern || {})[0];
+      const message = duplicatedField === 'phoneNumber'
+        ? 'Phone number already registered'
+        : duplicatedField === 'email'
+          ? 'Email already registered'
+          : 'User already registered';
+      return res.status(409).json({ message });
+    }
     return res.status(500).json({ message: 'Server error' });
   }
 };
@@ -180,10 +219,12 @@ const verify = async (req, res) => {
     user.verificationExpires = null;
     await user.save();
 
-    // activate account if exists
+    // create or activate account only after the email address is verified
     const account = await accountsModel.findAccountByUserId(user._id);
     if (account) {
       await accountsModel.updateAccountStatus(account._id, 'ACTIVE');
+    } else {
+      await accountsModel.createAccount(user._id, 'ACTIVE');
     }
 
     return renderVerifyHtml(
@@ -518,29 +559,6 @@ const openResetPasswordPage = (req, res) => {
   `);
 };
 
-/* ================= VERIFY STATUS ================= */
-const verifyStatus = async (req, res) => {
-  try {
-    const { email } = req.query;
-
-    if (!email || typeof email !== 'string') {
-      return res.status(400).json({ message: 'Email is required' });
-    }
-
-    const user = await usersModel.findUserByEmail(email.trim());
-    if (!user) {
-      return res.status(404).json({ message: 'User not registered' });
-    }
-
-    return res.status(200).json({
-      isVerified: Boolean(user.isVerified)
-    });
-  } catch (err) {
-    console.error(err);
-    return res.status(500).json({ message: 'Server error' });
-  }
-};
-
 export default {
   signup,
   verify,
@@ -548,6 +566,5 @@ export default {
   logout,
   forgotPassword,
   resetPassword,
-  openResetPasswordPage,
-  verifyStatus
+  openResetPasswordPage
 };

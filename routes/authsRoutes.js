@@ -17,6 +17,5 @@ router.post('/forgot-password', authForgotPasswordLimiter, controller.forgotPass
 router.get('/reset-password/:token', controller.openResetPasswordPage);
 router.get('/reset-password', controller.openResetPasswordPage);
 router.post('/reset-password', authResetPasswordLimiter, controller.resetPassword);
-router.get('/verify-status', controller.verifyStatus);
 
 export default router;
