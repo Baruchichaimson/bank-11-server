@@ -14,11 +14,12 @@ const shouldTryLlmFallback = (parsed, userInput) => {
 };
 
 export const detectIntent = async ({ userInput, createChatCompletion, abortSignal }) => {
-  const parsed = parseQueryFromCurrentMessage(userInput);
-  const llmParsed = shouldTryLlmFallback(parsed, userInput)
-    ? await parseQueryWithLlm({ userInput, createChatCompletion, abortSignal })
-    : null;
-  const finalParse = llmParsed || parsed;
+  //const parsed = parseQueryFromCurrentMessage(userInput);
+  // const llmParsed = shouldTryLlmFallback(parsed, userInput)
+  //   ? await parseQueryWithLlm({ userInput, createChatCompletion, abortSignal })
+  //   : null;
+   const llmParsed = await parseQueryWithLlm({ userInput, createChatCompletion, abortSignal });
+   const finalParse = llmParsed || parsed;
 
   return {
     intent: finalParse.intent,
