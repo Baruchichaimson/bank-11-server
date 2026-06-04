@@ -57,159 +57,155 @@ const buildResetTransferFormAction = (language) => ({
   language
 });
 
-const parseEmail = (text) => {
-  const value = String(text || '').toLowerCase();
-  const match = value.match(/[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}/i);
-  return match ? match[0].trim() : '';
+const EMAIL_PATTERN = /^[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}$/i;
+
+const normalizePayloadEmail = (value) => {
+  if (typeof value !== 'string') return '';
+  const email = value.trim().toLowerCase();
+  return EMAIL_PATTERN.test(email) ? email : '';
 };
 
-const parseAmount = (text) => {
-  const raw = String(text || '');
-  const explicitMatch = raw.match(
-    /(?:\bamount\b|סכום)\s*[:=]?\s*(\d+(?:[.,]\d{1,2})?)/i
-  );
-  const value = raw.replace(/,/g, '.');
-  const standaloneNumbers = [...value.matchAll(/(^|[^a-z0-9.])(\d+(?:\.\d{1,2})?)(?=$|[^a-z0-9.])/gi)];
-  const numericToken = explicitMatch?.[1] || standaloneNumbers.at(-1)?.[2];
-  if (!numericToken) return null;
-  const amount = Number(String(numericToken).replace(/,/g, '.'));
+const normalizePayloadAmount = (value) => {
+  if (value === null || value === undefined || value === '') return null;
+  const amount = Number(String(value).replace(/,/g, '.'));
   if (!Number.isFinite(amount) || amount <= 0) return null;
   return amount;
 };
 
-const parseDescription = (text) => {
-  const value = String(text || '');
-  const match = value.match(/(?:description|תיאור)\s+(.+)$/i);
-  if (!match?.[1]) return '';
-  return String(match[1]).trim();
+const normalizePayloadDescription = (value) => {
+  if (typeof value !== 'string') return '';
+  return value.trim();
 };
 
-const parseTransferPayload = (text) => {
-  const receiverEmail = parseEmail(text);
-  const amount = parseAmount(text);
-  if (!receiverEmail || !amount) return null;
+const createEmptyTransferPayload = () => ({
+  receiverEmail: '',
+  amount: null,
+  description: '',
+  confirmation: null,
+  skipDescription: false,
+  startNewTransfer: false
+});
+
+const normalizeTransferPayload = (payload = {}) => {
+  const confirmation = ['yes', 'no'].includes(payload.confirmation) ? payload.confirmation : null;
+
   return {
-    receiverEmail,
-    amount,
-    description: parseDescription(text)
+    receiverEmail: normalizePayloadEmail(payload.receiverEmail),
+    amount: normalizePayloadAmount(payload.amount),
+    description: normalizePayloadDescription(payload.description),
+    confirmation,
+    skipDescription: Boolean(payload.skipDescription),
+    startNewTransfer: Boolean(payload.startNewTransfer)
   };
 };
 
-const normalizeConfirmationInput = (text) => (
-  String(text || '')
-    .toLowerCase()
-    .replace(/[\u200e\u200f\u202a-\u202e]/g, '')
-    .replace(/[.,!?'"`~:;()[\]{}<>]/g, '')
-    .trim()
+const hasMeaningfulTransferPayload = (payload = {}) => Boolean(
+  payload.receiverEmail
+    || payload.amount
+    || payload.description
+    || payload.confirmation
+    || payload.skipDescription
+    || payload.startNewTransfer
 );
 
-const isTransferIntent = (text) => {
-  const value = String(text || '').toLowerCase().trim();
+const mergeTransferPayload = (basePayload, nextPayload) => {
+  const base = basePayload || createEmptyTransferPayload();
+  const next = nextPayload || createEmptyTransferPayload();
 
-  const historyLike = [
-    'היסטור',
-    'history',
-    'last transfer',
-    'העברה אחרונה',
-    'כמה העברות',
-    'count transfers',
-    'recent transfers',
-    'העברות אחרונות'
-  ].some((token) => value.includes(token));
-
-  if (historyLike) return false;
-
-  return [
-    'send money',
-    'make transfer',
-    'new transfer',
-    'transfer now',
-    'start transfer',
-    'להעביר כסף',
-    'בצע העברה',
-    'תבצע לי העברה',
-    'תבצע העברה',
-    'העברה חדשה',
-    'שלח כסף',
-    'תעביר לי',
-    'תעביר'
-  ].some((token) => value.includes(token));
+  return {
+    receiverEmail: base.receiverEmail || next.receiverEmail || '',
+    amount: base.amount ?? next.amount ?? null,
+    description: base.description || next.description || '',
+    confirmation: base.confirmation || next.confirmation || null,
+    skipDescription: Boolean(base.skipDescription || next.skipDescription),
+    startNewTransfer: Boolean(base.startNewTransfer || next.startNewTransfer)
+  };
 };
 
-const isBalanceIntent = (text) => {
-  const value = String(text || '').toLowerCase().trim();
-  return [
-    'check balance',
-    'balance',
-    'יתרה',
-    'כמה כסף יש',
-    'מצב חשבון'
-  ].some((token) => value.includes(token));
-};
+const parseJsonObject = (content) => {
+  const text = String(content || '').trim();
+  if (!text) return null;
 
-const isViewTransactionsIntent = (text) => {
-  const value = String(text || '').toLowerCase().trim();
-  return [
-    'view transactions',
-    'recent transfers',
-    'transfer history',
-    'last transfer',
-    'העברות אחרונות',
-    'היסטוריית העברות',
-    'העברה אחרונה'
-  ].some((token) => value.includes(token));
-};
-
-const isAccountSummaryIntent = (text) => {
-  const value = String(text || '').toLowerCase().trim();
-  return [
-    'account summary',
-    'account status',
-    'summary',
-    'סיכום חשבון',
-    'סטטוס חשבון',
-    'מצב חשבון'
-  ].some((token) => value.includes(token));
-};
-
-const classifyIntent = (text) => {
-  if (isTransferIntent(text)) return 'transfer_money';
-  if (isBalanceIntent(text)) return 'check_balance';
-  if (isViewTransactionsIntent(text)) return 'view_transactions';
-  if (isAccountSummaryIntent(text)) return 'account_summary';
-  return 'general_banking_question';
-};
-
-const isYes = (text) => {
-  const value = normalizeConfirmationInput(text);
-  return (
-    ['yes', 'confirm', 'ok', 'approve', 'כן', 'מאשר', 'אשר', 'תאשר'].includes(value) ||
-    value.startsWith('yes ') ||
-    value.startsWith('כן ')
-  );
-};
-
-const isNo = (text) => {
-  const value = normalizeConfirmationInput(text);
-  return (
-    ['no', 'cancel', 'stop', 'לא', 'בטל', 'ביטול'].includes(value) ||
-    value.startsWith('no ') ||
-    value.startsWith('לא ')
-  );
-};
-
-const buildPrompt = (language, phase) => {
-  if (language === 'he') {
-    if (phase === TRANSFER_PHASE.COLLECT_RECEIVER) return 'כדי לבצע העברה, מה האימייל של המקבל?';
-    if (phase === TRANSFER_PHASE.COLLECT_AMOUNT) return 'מה הסכום להעברה?';
-    if (phase === TRANSFER_PHASE.COLLECT_DESCRIPTION) return 'רוצה להוסיף תיאור קצר להעברה? (או כתוב "דלג")';
-  } else {
-    if (phase === TRANSFER_PHASE.COLLECT_RECEIVER) return 'To make a transfer, what is the recipient email?';
-    if (phase === TRANSFER_PHASE.COLLECT_AMOUNT) return 'What amount should I transfer?';
-    if (phase === TRANSFER_PHASE.COLLECT_DESCRIPTION) return 'Do you want to add a short description? (or type "skip")';
+  try {
+    return JSON.parse(text);
+  } catch {
+    return null;
   }
-  return '';
 };
+
+const extractTransferDetailsWithLlm = async ({
+  userInput,
+  phase,
+  createChatCompletion,
+  abortSignal
+}) => {
+  if (!createChatCompletion) return createEmptyTransferPayload();
+
+  try {
+    const response = await createChatCompletion({
+      temperature: 0,
+      response_format: { type: 'json_object' },
+      messages: [
+        {
+          role: 'system',
+          content: [
+            'You extract fields for an already-active money transfer workflow.',
+            'Do not classify user intent, route workflows, or answer the user.',
+            `Current transfer phase: ${phase}.`,
+            'Return only strict JSON with this shape:',
+            '{"receiverEmail":null,"amount":null,"description":null,"confirmation":null,"skipDescription":false,"startNewTransfer":false}',
+            'Extract only values explicitly present in the current message.',
+            'confirmation must be "yes", "no", or null.'
+          ].join('\n')
+        },
+        { role: 'user', content: String(userInput || '').trim() }
+      ],
+      abortSignal
+    });
+    const parsed = parseJsonObject(response?.choices?.[0]?.message?.content);
+    return normalizeTransferPayload(parsed?.transferPayload || parsed || {});
+  } catch {
+    return createEmptyTransferPayload();
+  }
+};
+
+const getSemanticTransferPayload = async (state, config) => {
+  const payload = state.transferPayload || {};
+  const correction = state.correction || {};
+  const merged = { ...payload };
+
+  if (correction.field === 'recipient' && merged.receiverEmail == null) {
+    merged.receiverEmail = correction.value;
+  }
+  if (correction.field === 'amount' && merged.amount == null) {
+    merged.amount = correction.value;
+  }
+  if (correction.field === 'note' && merged.description == null) {
+    merged.description = correction.value;
+  }
+
+  let normalized = normalizeTransferPayload(merged);
+  const phase = state.phase || TRANSFER_PHASE.IDLE;
+
+  if (phase === TRANSFER_PHASE.IDLE) return normalized;
+
+  if (hasMeaningfulTransferPayload(normalized)) return normalized;
+
+  const llmExtracted = await extractTransferDetailsWithLlm({
+    userInput: state.userInput,
+    phase,
+    createChatCompletion: config?.configurable?.createChatCompletion,
+    abortSignal: config?.configurable?.abortSignal
+  });
+
+  return mergeTransferPayload(normalized, llmExtracted);
+};
+
+const buildTransferConfirmationSummary = ({ language, amount, receiverEmail, description }) => (
+  language === 'he'
+    ? `לפני ביצוע ההעברה, נא לאשר את הפרטים:\nסכום: ${amount} ILS\nנמען: ${receiverEmail}${description ? `\nתיאור: ${description}` : ''}\n\nאם הכול נכון כתוב "כן". לביטול כתוב "לא".`
+    : `Before I execute the transfer, please confirm the details:\nAmount: ${amount} ILS\nRecipient: ${receiverEmail}${description ? `\nDescription: ${description}` : ''}\n\nIf everything is correct, type "yes". To cancel, type "no".`
+);
 
 const buildLowBalanceSuggestion = (language, balance) => {
   if (balance > 300) return null;
@@ -222,7 +218,7 @@ const buildSafetyTips = (language, amount) => {
   if (language === 'he') {
     return [
       'ודא שכתובת האימייל של המקבל נכונה לפני העברה נוספת.',
-      amount >= 1000
+      amount > EXTRA_CONFIRMATION_THRESHOLD
         ? 'בסכומים גבוהים מומלץ לבצע אימות נוסף מול המקבל.'
         : 'שמור תיעוד קצר של מטרת ההעברה למעקב עתידי.'
     ];
@@ -230,16 +226,17 @@ const buildSafetyTips = (language, amount) => {
 
   return [
     'Verify the recipient email before making another transfer.',
-    amount >= 1000
+    amount > EXTRA_CONFIRMATION_THRESHOLD
       ? 'For larger amounts, perform an extra verification with the recipient.'
       : 'Keep a short note of the transfer purpose for future tracking.'
   ];
 };
 
-const processTransferInput = async (state) => {
+const processTransferInput = async (state, config) => {
   const userInput = String(state.userInput || '').trim();
   const userLanguage = getFlowLanguage(state);
   const phase = state.phase || TRANSFER_PHASE.IDLE;
+  const semanticTransfer = await getSemanticTransferPayload(state, config);
 
   if (!userInput) {
     return { handled: false, reply: '', phase };
@@ -249,7 +246,7 @@ const processTransferInput = async (state) => {
     return { handled: false, reply: '', action: null, phase: TRANSFER_PHASE.IDLE };
   }
 
-  if (isNo(userInput)) {
+  if (semanticTransfer.confirmation === 'no') {
     return {
       handled: true,
       reply: userLanguage === 'he' ? 'ביטלתי את תהליך ההעברה.' : 'I canceled the transfer flow.',
@@ -265,7 +262,13 @@ const processTransferInput = async (state) => {
   let description = state.description || '';
   let riskConfirmationAsked = Boolean(state.riskConfirmationAsked);
   let flowLanguage = state.flowLanguage || userLanguage;
-  const parsedPayload = parseTransferPayload(userInput);
+  const parsedPayload = semanticTransfer.receiverEmail && semanticTransfer.amount
+    ? {
+        receiverEmail: semanticTransfer.receiverEmail,
+        amount: semanticTransfer.amount,
+        description: semanticTransfer.description
+      }
+    : null;
 
   // If the message already contains full transfer details (common with inline form submit),
   // run directly without an extra confirmation chat round.
@@ -286,7 +289,7 @@ const processTransferInput = async (state) => {
 
   // Only reopen a new transfer form for generic transfer requests.
   // A structured payload from the inline form should be processed immediately above.
-  if (phase !== TRANSFER_PHASE.IDLE && isTransferIntent(userInput)) {
+  if (phase !== TRANSFER_PHASE.IDLE && semanticTransfer.startNewTransfer) {
     const nextFlowLanguage = state.userLanguage === 'he' ? 'he' : 'en';
     return {
       handled: true,
@@ -294,7 +297,11 @@ const processTransferInput = async (state) => {
         ? 'פתחתי עבורך טופס העברה חדש בתוך הצ׳אט. מלא פרטים ולחץ שלח.'
         : 'I opened a new transfer form in the chat. Fill the details and submit.',
       action: buildOpenTransferFormAction(nextFlowLanguage),
-      ...resetTransferFlow,
+      phase: TRANSFER_PHASE.FORM_OPEN,
+      receiverEmail: '',
+      amount: null,
+      description: '',
+      riskConfirmationAsked: false,
       flowLanguage: nextFlowLanguage,
       shouldRunTransfer: false
     };
@@ -302,9 +309,9 @@ const processTransferInput = async (state) => {
 
   if (nextPhase === TRANSFER_PHASE.IDLE) {
     flowLanguage = state.userLanguage === 'he' ? 'he' : 'en';
-    const parsedEmail = parseEmail(userInput);
-    const parsedAmount = parseAmount(userInput);
-    const parsedDescription = parseDescription(userInput);
+    const parsedEmail = semanticTransfer.receiverEmail;
+    const parsedAmount = semanticTransfer.amount;
+    const parsedDescription = semanticTransfer.description;
 
     if (parsedEmail && parsedAmount) {
       receiverEmail = parsedEmail;
@@ -333,7 +340,7 @@ const processTransferInput = async (state) => {
           handled: true,
           reply: '',
           action: buildTransferFormErrorAction('receiverEmail', message, userLanguage),
-          phase: TRANSFER_PHASE.COLLECT_RECEIVER,
+          phase: TRANSFER_PHASE.FORM_OPEN,
           receiverEmail: '',
           amount: parsedAmount,
           description: parsedDescription || '',
@@ -348,77 +355,62 @@ const processTransferInput = async (state) => {
           ? 'פתחתי עבורך טופס העברה קצר בתוך הצ׳אט. מלא פרטים ולחץ שלח.'
           : 'I opened a quick transfer form in the chat. Fill the details and submit.',
         action: buildOpenTransferFormAction(userLanguage),
-        ...resetTransferFlow,
+        phase: TRANSFER_PHASE.FORM_OPEN,
+        receiverEmail: '',
+        amount: null,
+        description: '',
+        riskConfirmationAsked: false,
         flowLanguage,
         shouldRunTransfer: false
       };
     }
   }
 
-  if (nextPhase === TRANSFER_PHASE.COLLECT_RECEIVER) {
-    const parsed = parseEmail(userInput);
-    if (!parsed) {
-      const message = userLanguage === 'he'
-        ? 'כתובת האימייל של המקבל לא תקינה. תקן את השדה ונסה שוב.'
-        : 'Recipient email is invalid. Please fix the email field and try again.';
-      return {
-        handled: true,
-        reply: '',
-        action: buildTransferFormErrorAction('receiverEmail', message, userLanguage),
-        phase: TRANSFER_PHASE.COLLECT_RECEIVER,
-        receiverEmail,
-        amount,
-        description,
-        flowLanguage,
-        shouldRunTransfer: false
-      };
-    }
-    receiverEmail = parsed;
-    nextPhase = TRANSFER_PHASE.COLLECT_AMOUNT;
-    riskConfirmationAsked = false;
+  if (nextPhase === TRANSFER_PHASE.FORM_OPEN) {
+    const parsedEmail = semanticTransfer.receiverEmail;
+    const parsedAmount = semanticTransfer.amount;
+    const parsedDescription = semanticTransfer.description;
+    const missingField = !parsedEmail ? 'receiverEmail' : 'amount';
+    const message = missingField === 'receiverEmail'
+      ? (userLanguage === 'he'
+          ? 'כתובת האימייל של המקבל לא תקינה. תקן את השדה בטופס ולחץ שלח.'
+          : 'Recipient email is invalid. Please fix the form field and press Send.')
+      : (userLanguage === 'he'
+          ? 'הסכום לא תקין. תקן את השדה בטופס ולחץ שלח.'
+          : 'Amount is invalid. Please fix the form field and press Send.');
+
+    return {
+      handled: true,
+      reply: '',
+      action: buildTransferFormErrorAction(missingField, message, userLanguage),
+      phase: TRANSFER_PHASE.FORM_OPEN,
+      receiverEmail: parsedEmail || receiverEmail,
+      amount: parsedAmount ?? amount,
+      description: parsedDescription || description,
+      riskConfirmationAsked,
+      flowLanguage,
+      shouldRunTransfer: false
+    };
   }
 
-  if (nextPhase === TRANSFER_PHASE.COLLECT_AMOUNT) {
-    const parsed = parseAmount(userInput);
-    if (!parsed) {
-      const message = userLanguage === 'he'
-        ? 'הסכום לא תקין. הזן סכום מספרי גדול מ־0.'
-        : 'Amount is invalid. Enter a numeric amount greater than 0.';
-      return {
-        handled: true,
-        reply: '',
-        action: buildTransferFormErrorAction('amount', message, userLanguage),
-        phase: TRANSFER_PHASE.COLLECT_AMOUNT,
-        receiverEmail,
-        amount,
-        description,
-        flowLanguage,
-        shouldRunTransfer: false
-      };
-    }
-    amount = parsed;
-    nextPhase = TRANSFER_PHASE.COLLECT_DESCRIPTION;
-    riskConfirmationAsked = false;
-  }
+  if (nextPhase === TRANSFER_PHASE.AWAIT_CONFIRMATION && semanticTransfer.confirmation !== 'yes') {
+    const correctedEmail = semanticTransfer.receiverEmail;
+    const correctedAmount = semanticTransfer.amount;
+    const correctedDescription = semanticTransfer.description;
 
-  if (nextPhase === TRANSFER_PHASE.COLLECT_DESCRIPTION) {
-    const value = userInput.toLowerCase();
-    if (
-      value !== String(receiverEmail).toLowerCase() &&
-      value !== String(amount) &&
-      !value.includes('דלג') &&
-      value !== 'skip'
-    ) {
-      description = userInput;
+    if (correctedEmail) receiverEmail = correctedEmail;
+    if (correctedAmount) amount = correctedAmount;
+    if (correctedDescription) description = correctedDescription;
+    if (correctedEmail || correctedAmount || correctedDescription) {
+      riskConfirmationAsked = false;
     }
-    nextPhase = TRANSFER_PHASE.AWAIT_CONFIRMATION;
-    riskConfirmationAsked = false;
-  }
 
-  if (nextPhase === TRANSFER_PHASE.AWAIT_CONFIRMATION && !isYes(userInput)) {
-    const summary = userLanguage === 'he'
-      ? `לפני ביצוע ההעברה, נא לאשר את הפרטים:\nסכום: ${amount} ILS\nנמען: ${receiverEmail}${description ? `\nתיאור: ${description}` : ''}\n\nאם הכול נכון כתוב "כן". לביטול כתוב "לא".`
-      : `Before I execute the transfer, please confirm the details:\nAmount: ${amount} ILS\nRecipient: ${receiverEmail}${description ? `\nDescription: ${description}` : ''}\n\nIf everything is correct, type "yes". To cancel, type "no".`;
+    const summary = buildTransferConfirmationSummary({
+      language: userLanguage,
+      amount,
+      receiverEmail,
+      description
+    });
 
     return {
       handled: true,
@@ -450,13 +442,12 @@ const processTransferInput = async (state) => {
 
 const findIntentNode = async (state) => {
   const phase = state.phase || TRANSFER_PHASE.IDLE;
-  const userInput = String(state.userInput || '').trim();
 
   if (phase !== TRANSFER_PHASE.IDLE) {
     return { transferIntent: true, detectedIntent: 'transfer_money' };
   }
 
-  const detectedIntent = classifyIntent(userInput);
+  const detectedIntent = state.semanticIntent || 'unknown';
   return {
     transferIntent: detectedIntent === 'transfer_money',
     detectedIntent
@@ -491,7 +482,7 @@ const evaluateAccountNode = async (state, config) => {
         handled: true,
         reply: '',
         action: buildTransferFormErrorAction('receiverEmail', message, userLanguage),
-        phase: TRANSFER_PHASE.COLLECT_RECEIVER,
+        phase: TRANSFER_PHASE.FORM_OPEN,
         receiverEmail: '',
         amount: null,
         description: '',
@@ -508,7 +499,7 @@ const evaluateAccountNode = async (state, config) => {
         handled: true,
         reply: '',
         action: buildTransferFormErrorAction('receiverEmail', message, userLanguage),
-        phase: TRANSFER_PHASE.COLLECT_RECEIVER,
+        phase: TRANSFER_PHASE.FORM_OPEN,
         receiverEmail: '',
         amount: null,
         description: '',
@@ -544,7 +535,7 @@ const evaluateAccountNode = async (state, config) => {
         handled: true,
         reply: '',
         action: buildTransferFormErrorAction('amount', message, userLanguage),
-        phase: TRANSFER_PHASE.COLLECT_AMOUNT,
+        phase: TRANSFER_PHASE.FORM_OPEN,
         receiverEmail: String(state.receiverEmail || ''),
         description: String(state.description || ''),
         amount: null,
@@ -593,6 +584,8 @@ const evaluateAccountNode = async (state, config) => {
 };
 
 const riskAssessmentNode = async (state, config) => {
+  if (state.handled && !state.shouldRunTransfer) return {};
+
   const services = getBusinessServices(config);
   const userLanguage = getFlowLanguage(state);
 
@@ -798,18 +791,28 @@ export const runTransferGraph = async ({
   userLanguage,
   userId,
   transferState,
-  services
+  semanticIntent = 'unknown',
+  transferPayload = null,
+  correction = null,
+  services,
+  createChatCompletion,
+  abortSignal
 }) => {
   const result = await transferGraph.invoke(
     buildTransferGraphInitialState({
       userInput,
       userLanguage,
       userId,
-      transferState
+      transferState,
+      semanticIntent,
+      transferPayload,
+      correction
     }),
     {
       configurable: {
-        services
+        services,
+        createChatCompletion,
+        abortSignal
       }
     }
   );

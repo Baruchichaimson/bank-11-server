@@ -1,7 +1,7 @@
 export const createIsolatedTurnState = ({ userInput, userId, userLanguage }) => ({
   immutableIntentInput: String(userInput || '').trim(),
   routing: {
-    intentSource: 'current_message_only',
+    intentSource: 'safe_unknown',
     domain: 'unknown',
     intent: 'unknown'
   },

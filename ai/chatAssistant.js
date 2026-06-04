@@ -9,7 +9,7 @@ import { createBusinessServices } from './services/businessServices.js';
 import {
   MAX_HISTORY,
   detectLanguage
-} from './shared/legacyCompatUtils.js';
+} from './shared/shared.js';
 import { createReplyPayload } from './shared/responseWrappers.js';
 
 const createChatCompletion = async (payload) => {
@@ -28,6 +28,7 @@ export const generateAssistantReply = async ({
   userId,
   history = [],
   transferState = null,
+  transferPayload = null,
   abortSignal
 }) => {
   const trimmed = String(userInput || '').trim();
@@ -53,6 +54,7 @@ export const generateAssistantReply = async ({
       userId,
       history: shortHistory,
       transferState,
+      transferPayload,
       createChatCompletion: Boolean(hasOpenAiKey && openai) ? createChatCompletion : null,
       services,
       abortSignal

@@ -69,6 +69,34 @@ const readTokenFromCookieHeader = (cookieHeader) => {
   return null;
 };
 
+const normalizeTransferPayload = (value) => {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+
+  return {
+    receiverEmail: typeof value.receiverEmail === 'string' ? value.receiverEmail : null,
+    amount: value.amount ?? null,
+    description: typeof value.description === 'string' ? value.description : null,
+    confirmation: ['yes', 'no'].includes(value.confirmation) ? value.confirmation : null,
+    skipDescription: Boolean(value.skipDescription),
+    startNewTransfer: Boolean(value.startNewTransfer)
+  };
+};
+const isActiveTransferState = (state = null) => {
+  const phase = state?.phase;
+  return Boolean(phase && phase !== 'idle');
+};
+const hasMeaningfulTransferPayload = (payload = null) => Boolean(
+  payload
+    && (
+      payload.receiverEmail
+      || payload.amount
+      || payload.description
+      || payload.confirmation
+      || payload.skipDescription
+      || payload.startNewTransfer
+    )
+);
+
 export const initSocketServer = (httpServer) => {
   const io = new Server(httpServer, {
     cors: {
@@ -140,6 +168,16 @@ export const initSocketServer = (httpServer) => {
           return;
         }
 
+        const transferPayload = normalizeTransferPayload(payload?.transferPayload);
+        if (isActiveTransferState(transferState) && !hasMeaningfulTransferPayload(transferPayload)) {
+          socket.emit(ERROR_EVENT, {
+            requestId,
+            message: 'Complete the current workflow before sending another chat message.'
+          });
+          activeAssistantRequests.delete(requestId);
+          return;
+        }
+
         const account = await accountsModel.findAccountByUserId(socket.user.id);
         const transactions = await findTransactionsByUserId(socket.user.id);
 
@@ -156,6 +194,7 @@ export const initSocketServer = (httpServer) => {
           userId: socket.user.id,
           history,
           transferState,
+          transferPayload,
           userContext,
           abortSignal: controller.signal
         });
@@ -167,7 +206,12 @@ export const initSocketServer = (httpServer) => {
 
         history = nextHistory;
         transferState = nextTransferState || null;
-        socket.emit(REPLY_EVENT, { requestId, message: reply, action: action || null });
+        socket.emit(REPLY_EVENT, {
+          requestId,
+          message: reply,
+          action: action || null,
+          nextTransferState: transferState
+        });
         activeAssistantRequests.delete(requestId);
       } catch (err) {
         const details = String(err?.message || err);

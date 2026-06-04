@@ -8,7 +8,7 @@ const evaluateAccountNode = async (state, config) => {
 
   return {
     ...state,
-    workflow: { ...state.workflow, currentPhase: 'Evaluate Account' },
+    workflow: { ...state.workflow, activeWorkflow: 'unknown', currentPhase: 'Evaluate Account' },
     balance: {
       ...state.balance,
       currentBalance: result?.balance ?? null,

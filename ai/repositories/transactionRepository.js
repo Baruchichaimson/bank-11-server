@@ -48,4 +48,34 @@ export class TransactionRepository {
 
     return cursor.lean();
   }
+
+  async listCounterpartyByName({ userId, recipientName, limit = 10, startDate = null, endDate = null }) {
+    const email = await this.resolveUserEmail(userId);
+    if (!email) return [];
+
+    const normalizedName = String(recipientName || '').trim();
+    if (!normalizedName) return [];
+
+    const safeName = normalizedName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const counterpartyEmailRegex = new RegExp(`^${safeName}@`, 'i');
+    const query = {
+      $or: [
+        { fromEmail: email, toEmail: counterpartyEmailRegex },
+        { fromEmail: counterpartyEmailRegex, toEmail: email }
+      ]
+    };
+
+    if (startDate || endDate) {
+      query.createdAt = {
+        ...(startDate ? { $gte: startDate } : {}),
+        ...(endDate ? { $lte: endDate } : {})
+      };
+    }
+
+    const cursor = Transaction.find(query).sort({ createdAt: -1 });
+
+    const safeLimit = Number.isInteger(limit) && limit > 0 ? Math.min(limit, 100) : 10;
+    cursor.limit(safeLimit);
+    return cursor.lean();
+  }
 }

@@ -1,7 +1,6 @@
 import { END, START, StateGraph } from '@langchain/langgraph';
 import { BankingState, createInitialBankingState } from '../state/bankingState.js';
 import { detectIntent } from '../intents/detectIntent.js';
-import { isTransferControlMessage } from '../intents/queryParser.js';
 import { routeWorkflow } from '../router/workflowRouter.js';
 import { runTransferWorkflow } from './workflows/transferWorkflow.js';
 import { runTransactionsWorkflow } from './workflows/transactionsWorkflow.js';
@@ -21,41 +20,9 @@ const userRequestNode = async (state) => ({
 });
 
 const findIntentNode = async (state, config) => {
-  if (
-    state.transfer.nextTransferState?.phase
-    && state.transfer.nextTransferState.phase !== 'idle'
-    && isTransferControlMessage(state.userInput)
-  ) {
-    const detection = { intent: 'transfer_money', confidence: 1, domain: 'transactions', source: 'current_message_transfer_control' };
-    return {
-      ...state,
-      workflow: { ...state.workflow, currentPhase: 'Find Intent' },
-      intent: {
-        detectedIntent: detection.intent,
-        confidence: detection.confidence,
-        domain: detection.domain,
-        semanticQuery: null,
-        source: detection.source
-      },
-      isolation: {
-        ...state.isolation,
-        routing: {
-          ...state.isolation?.routing,
-          intentSource: detection.source,
-          domain: detection.domain,
-          intent: detection.intent
-        }
-      },
-      audit: {
-        ...state.audit,
-        aiDecisions: [...(state.audit?.aiDecisions || []), detection],
-        transitions: [...(state.audit?.transitions || []), 'Find Intent']
-      }
-    };
-  }
-
   const detection = await detectIntent({
     userInput: state.userInput,
+    history: state.history,
     createChatCompletion: config?.configurable?.createChatCompletion,
     abortSignal: config?.configurable?.abortSignal
   });
@@ -68,15 +35,23 @@ const findIntentNode = async (state, config) => {
       confidence: detection.confidence,
       domain: detection.domain || 'unknown',
       semanticQuery: detection.semanticQuery || null,
-      source: detection.source || 'current_message_only'
+      source: detection.source || 'safe_unknown',
+      workflowContinuation: Boolean(detection.workflowContinuation),
+      correction: detection.correction || null,
+      transferPayload: detection.transferPayload || null,
+      toolName: detection.toolName || null,
+      toolArgs: detection.toolArgs || {},
+      isAmbiguous: Boolean(detection.isAmbiguous),
+      ambiguityReason: detection.ambiguityReason || null
     },
     isolation: {
       ...state.isolation,
       routing: {
         ...state.isolation?.routing,
-        intentSource: detection.source || 'current_message_only',
+        intentSource: detection.source || 'safe_unknown',
         domain: detection.domain || 'unknown',
-        intent: detection.intent
+        intent: detection.intent,
+        toolName: detection.toolName || null
       }
     },
     audit: {
@@ -108,6 +83,10 @@ const workflowRouterNode = async (state) => {
 
 const selectWorkflow = (state) => state.workflow.activeWorkflow || 'unknown_workflow';
 
+const routeAfterUserRequest = (state) => (
+  state.intent?.transferPayload ? 'transfer_workflow' : 'find_intent'
+);
+
 const returnResponseNode = async (state) => ({
   ...state,
   workflow: { ...state.workflow, currentPhase: 'Return Response with Suggestions' }
@@ -117,7 +96,12 @@ const graph = new StateGraph(BankingState)
   .addNode('user_request', userRequestNode)
   .addNode('find_intent', findIntentNode)
   .addNode('workflow_router', workflowRouterNode)
-  .addNode('transfer_workflow', (state, config) => runTransferWorkflow({ state, services: config?.configurable?.services }))
+  .addNode('transfer_workflow', (state, config) => runTransferWorkflow({
+    state,
+    services: config?.configurable?.services,
+    createChatCompletion: config?.configurable?.createChatCompletion,
+    abortSignal: config?.configurable?.abortSignal
+  }))
   .addNode('transactions_workflow', (state, config) => runTransactionsWorkflow({ state, services: config?.configurable?.services }))
   .addNode('balance_workflow', (state, config) => runBalanceWorkflow({ state, services: config?.configurable?.services }))
   .addNode('support_workflow', (state, config) => runSupportWorkflow({ state, services: config?.configurable?.services }))
@@ -125,7 +109,7 @@ const graph = new StateGraph(BankingState)
   .addNode('unknown_workflow', (state) => runUnknownWorkflow({ state }))
   .addNode('return_response', returnResponseNode)
   .addEdge(START, 'user_request')
-  .addEdge('user_request', 'find_intent')
+  .addConditionalEdges('user_request', routeAfterUserRequest)
   .addEdge('find_intent', 'workflow_router')
   .addConditionalEdges('workflow_router', selectWorkflow)
   .addEdge('transfer_workflow', 'return_response')
@@ -142,18 +126,34 @@ export const runBankingGraph = async ({
   userId,
   history = [],
   transferState = null,
+  transferPayload = null,
   createChatCompletion,
   services,
   abortSignal
 }) => {
   const userLanguage = detectLanguage(userInput);
-  const initialState = createInitialBankingState({
+  const baseState = createInitialBankingState({
     userInput: String(userInput || '').trim(),
     history,
     userId,
     userLanguage,
     transferState
   });
+  const initialState = transferPayload
+    ? {
+        ...baseState,
+        intent: {
+          ...baseState.intent,
+          detectedIntent: 'transfer_money',
+          domain: 'transactions',
+          transferPayload
+        },
+        workflow: {
+          ...baseState.workflow,
+          activeWorkflow: 'transfer_workflow'
+        }
+      }
+    : baseState;
 
   const result = await graph.invoke(initialState, {
     configurable: {

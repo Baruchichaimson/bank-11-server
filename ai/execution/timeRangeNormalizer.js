@@ -10,53 +10,59 @@ const endOfDay = (date) => {
   return value;
 };
 
-const startOfMonth = (year, monthIndex) => new Date(year, monthIndex, 1, 0, 0, 0, 0);
-const endOfMonth = (year, monthIndex) => new Date(year, monthIndex + 1, 0, 23, 59, 59, 999);
+const buildIsoDate = ({ year, month, day }) => {
+  const date = new Date(year, month - 1, day);
+  if (
+    date.getFullYear() !== year
+    || date.getMonth() !== month - 1
+    || date.getDate() !== day
+  ) {
+    return null;
+  }
 
-export const normalizeTimeRange = ({ timeRange, now = new Date() } = {}) => {
-  if (!timeRange) {
+  return date;
+};
+
+const parseIsoDate = (value) => {
+  if (!value) return null;
+
+  const match = String(value || '').trim().match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!match) return null;
+
+  return buildIsoDate({
+    year: Number(match[1]),
+    month: Number(match[2]),
+    day: Number(match[3])
+  });
+};
+
+const hasDateRangeInput = (dateRange) => Boolean(
+  dateRange
+    && typeof dateRange === 'object'
+    && !Array.isArray(dateRange)
+    && (dateRange.from || dateRange.to)
+);
+
+export const normalizeTimeRange = ({ dateRange = null } = {}) => {
+  if (!hasDateRangeInput(dateRange)) {
     return { startDate: null, endDate: null, label: null };
   }
 
-  const current = new Date(now);
-  if (Number.isNaN(current.getTime())) {
-    throw new Error('Invalid reference date for time range normalization');
+  const fromDate = parseIsoDate(dateRange.from);
+  const toDate = parseIsoDate(dateRange.to);
+  if ((dateRange.from && !fromDate) || (dateRange.to && !toDate)) {
+    throw new Error('Invalid date range');
   }
 
-  if (timeRange === 'today') {
-    return {
-      startDate: startOfDay(current),
-      endDate: endOfDay(current),
-      label: 'today'
-    };
+  const startDate = fromDate ? startOfDay(fromDate) : null;
+  const endDate = toDate ? endOfDay(toDate) : null;
+  if (startDate && endDate && startDate.getTime() > endDate.getTime()) {
+    throw new Error('Invalid date range');
   }
 
-  if (timeRange === 'last_week') {
-    const endDate = endOfDay(new Date(current.getFullYear(), current.getMonth(), current.getDate() - 1));
-    const startDate = startOfDay(new Date(current.getFullYear(), current.getMonth(), current.getDate() - 7));
-    return { startDate, endDate, label: 'last_week' };
-  }
-
-  if (timeRange === 'last_month') {
-    const year = current.getFullYear();
-    const month = current.getMonth();
-    const targetMonth = month === 0 ? 11 : month - 1;
-    const targetYear = month === 0 ? year - 1 : year;
-
-    return {
-      startDate: startOfMonth(targetYear, targetMonth),
-      endDate: endOfMonth(targetYear, targetMonth),
-      label: 'last_month'
-    };
-  }
-
-  if (timeRange === 'this_month') {
-    return {
-      startDate: startOfMonth(current.getFullYear(), current.getMonth()),
-      endDate: endOfDay(current),
-      label: 'this_month'
-    };
-  }
-
-  throw new Error(`Unsupported timeRange: ${timeRange}`);
+  return {
+    startDate,
+    endDate,
+    label: 'date_range'
+  };
 };

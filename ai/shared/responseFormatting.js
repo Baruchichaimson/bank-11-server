@@ -82,7 +82,7 @@ export const formatFinancialResponse = (toolName, result, userLanguage) => {
       const rows = result.items
         .map((tx, index) => `העברה ${index + 1}\n--------------------\nסכום: ${tx.amount} ILS\nשולח: ${tx.fromEmail}\nמקבל: ${tx.toEmail}\nתאריך: ${formatDateForUser(tx.createdAt, userLanguage)}`)
         .join('\n\n\n');
-      return `מצאתי עבורך ${result.items.length} העברות ראשונות בטווח שביקשת:\n\n${rows}`;
+      return `מצאתי עבורך ${result.items.length} העברות בטווח שביקשת:\n\n${rows}`;
     }
   }
 
@@ -117,7 +117,7 @@ export const formatFinancialResponse = (toolName, result, userLanguage) => {
     const rows = result.items
       .map((tx, index) => `Transfer ${index + 1}\n--------------------\nAmount: ${tx.amount} ILS\nFrom: ${tx.fromEmail}\nTo: ${tx.toEmail}\nDate: ${formatDateForUser(tx.createdAt, userLanguage)}`)
       .join('\n\n\n');
-    return `I found ${result.items.length} earliest transfers in your requested range:\n\n${rows}`;
+    return `I found ${result.items.length} transfers in your requested range:\n\n${rows}`;
   }
 
   return 'Data retrieved successfully.';

@@ -38,7 +38,9 @@ export const createInitialBankingState = ({ userInput, history = [], userId, use
   isolation: createIsolatedTurnState({ userInput, userId, userLanguage }),
   intent: {
     detectedIntent: 'unknown',
-    confidence: 0
+    confidence: 0,
+    isAmbiguous: false,
+    ambiguityReason: null
   },
   workflow: {
     activeWorkflow: 'unknown',

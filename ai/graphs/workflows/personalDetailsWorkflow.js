@@ -8,7 +8,7 @@ const leverageDataNode = async (state, config) => {
 
   return {
     ...state,
-    workflow: { ...state.workflow, currentPhase: 'Leverage Data' },
+    workflow: { ...state.workflow, activeWorkflow: 'unknown', currentPhase: 'Leverage Data' },
     personalDetails: {
       ...state.personalDetails,
       userProfile: result

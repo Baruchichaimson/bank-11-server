@@ -53,9 +53,9 @@ export const createTransactionService = ({ executeBankTool, accountService, prof
 
     async openTransferForm({ userId }) {
       if (!executeBankTool) {
-        return { found: true, action: 'open_money_transfer', userId };
+        return { found: true, action: { type: 'open_money_transfer_inline' }, userId };
       }
-      return executeBankTool({ name: 'open_money_transfer_window', args: {}, userId });
+      return executeBankTool({ name: 'open_money_transfer_inline', args: {}, userId });
     },
 
     async executeTransfer({ fromAccountId, toAccountId, amount, description }) {

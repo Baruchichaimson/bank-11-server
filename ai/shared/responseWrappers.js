@@ -1,4 +1,4 @@
-import { MAX_HISTORY } from './legacyCompatUtils.js';
+import { MAX_HISTORY } from './shared.js';
 
 export const appendHistory = (history, userText, assistantText) => (
   [
@@ -27,7 +27,7 @@ export const getWindowToolReply = (toolName, userLanguage) => {
       ? 'פתחתי עבורך את חלון שיחת הווידאו.'
       : 'I opened the video call window for you.';
   }
-  if (toolName === 'open_money_transfer_window') {
+  if (toolName === 'open_money_transfer_inline') {
     return userLanguage === 'he'
       ? 'פתחתי עבורך טופס העברה קצר בתוך הצ׳אט.'
       : 'I opened a quick transfer form in the chat.';
@@ -37,6 +37,10 @@ export const getWindowToolReply = (toolName, userLanguage) => {
 
 export const getWindowToolAction = (toolName, toolResult) => {
   if (toolName === 'open_video_call_window') return toolResult?.action || 'open_video_call';
-  if (toolName === 'open_money_transfer_window') return { type: 'open_money_transfer_inline' };
+  if (toolName === 'open_money_transfer_inline') {
+    return typeof toolResult?.action === 'object' && toolResult.action
+      ? toolResult.action
+      : { type: 'open_money_transfer_inline' };
+  }
   return null;
 };

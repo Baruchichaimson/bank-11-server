@@ -13,10 +13,16 @@ export const detectLanguage = (text) => {
   return 'en';
 };
 
-export const getOutOfScopeReply = (userLanguage) => (
+export const getLlmUnavailableReply = (userLanguage) => (
   userLanguage === 'he'
-    ? 'אני עוזר רק בנושאי בנקאות. אפשר לשאול על יתרה, העברות, סטטוס חשבון, או לבקש פתיחת חלון שיחת וידאו/העברה.'
-    : 'I can help only with banking topics. Ask about balance, transfers, account status, or opening the video-call/transfer window.'
+    ? 'מנוע ה־AI לא מוגדר כרגע, ולכן אני לא יכול להבין את הבקשה. צריך להגדיר OPENAI_API_KEY, GROQ_API_KEY או AI_PROVIDER=ollama עם OLLAMA_BASE_URL.'
+    : 'The AI engine is not configured, so I cannot understand the request. Configure OPENAI_API_KEY, GROQ_API_KEY, or AI_PROVIDER=ollama with OLLAMA_BASE_URL.'
+);
+
+export const getLlmParseFailedReply = (userLanguage) => (
+  userLanguage === 'he'
+    ? 'קיבלתי תשובה לא תקינה ממנוע ה־AI ולא הצלחתי להבין את הבקשה. נסה שוב בעוד רגע.'
+    : 'The AI engine returned an invalid parser response, so I could not understand the request. Please try again shortly.'
 );
 
 export const appendHistory = (history, userText, assistantText) => (

@@ -9,8 +9,9 @@ export const sanitizeAssistantText = (text) => {
 export const containsToolLeak = (text) => {
   const value = String(text || '').toLowerCase();
   return (
-    value.includes('function') ||
-    value.includes('tool') ||
+    value.includes('<function') ||
+    value.includes('</function') ||
+    value.includes('"name"') ||
     value.includes('get_balance') ||
     value.includes('get_user_identity') ||
     value.includes('count_transfers') ||
@@ -18,9 +19,3 @@ export const containsToolLeak = (text) => {
     value.includes('get_recent_transfers')
   );
 };
-
-export const getOutOfScopeReply = (userLanguage) => (
-  userLanguage === 'he'
-    ? 'אני עוזר רק בנושאי בנקאות. אפשר לשאול על יתרה, העברות, סטטוס חשבון, או לבקש פתיחת חלון שיחת וידאו/העברה.'
-    : 'I can help only with banking topics. Ask about balance, transfers, account status, or opening the video-call/transfer window.'
-);
