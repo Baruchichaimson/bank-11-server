@@ -1,4 +1,5 @@
-import { parseQueryWithLlm } from './llmSemanticParser.js';
+import { parseQueryWithLlm, validateSemanticQuery } from './llmSemanticParser.js';
+import { normalizeTransactionSemanticQuery } from './transactionQueryNormalizer.js';
 
 const UNKNOWN_PARSE = {
   source: 'safe_unknown',
@@ -25,6 +26,32 @@ const LLM_PARSE_FAILED_PARSE = {
   source: 'llm_parse_failed'
 };
 
+const getCurrentDate = () => {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'Asia/Jerusalem',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit'
+  }).formatToParts(new Date());
+
+  const byType = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+  return `${byType.year}-${byType.month}-${byType.day}`;
+};
+
+const normalizeFinalSemanticQuery = ({ userInput, finalParse }) => {
+  if (finalParse.domain !== 'transactions' || finalParse.intent !== 'recent_transactions') {
+    return finalParse.semanticQuery;
+  }
+
+  const normalized = normalizeTransactionSemanticQuery({
+    userInput,
+    currentDate: getCurrentDate(),
+    semanticQuery: finalParse.semanticQuery
+  });
+
+  return validateSemanticQuery(normalized) || finalParse.semanticQuery;
+};
+
 export const detectIntent = async ({
   userInput,
   history = [],
@@ -40,12 +67,13 @@ export const detectIntent = async ({
   const finalParse =
     llmParsed ||
     (createChatCompletion ? LLM_PARSE_FAILED_PARSE : LLM_UNAVAILABLE_PARSE);
+  const semanticQuery = normalizeFinalSemanticQuery({ userInput, finalParse });
 
   return {
     intent: finalParse.intent,
     confidence: finalParse.confidence,
     domain: finalParse.domain,
-    semanticQuery: finalParse.semanticQuery,
+    semanticQuery,
     source: finalParse.source,
     workflowContinuation: Boolean(finalParse.workflowContinuation),
     correction: finalParse.correction || null,
