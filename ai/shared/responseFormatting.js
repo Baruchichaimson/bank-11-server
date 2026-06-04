@@ -5,6 +5,40 @@ const formatDateForUser = (isoString, userLanguage) => {
   return d.toLocaleString(userLanguage === 'he' ? 'he-IL' : 'en-US');
 };
 
+const formatRangeForUser = (result, userLanguage) => {
+  if (!result?.hasDateRange) return '';
+
+  const from = formatDateForUser(result.from, userLanguage);
+  const to = formatDateForUser(result.to, userLanguage);
+
+  if (from && to) {
+    return userLanguage === 'he' ? ` בין ${from} ל־${to}` : ` between ${from} and ${to}`;
+  }
+  if (from) {
+    return userLanguage === 'he' ? ` החל מ־${from}` : ` from ${from}`;
+  }
+  if (to) {
+    return userLanguage === 'he' ? ` עד ${to}` : ` until ${to}`;
+  }
+  return '';
+};
+
+const getHebrewListDirectionLabel = (result) => (
+  result?.sortDirection === 'asc' ? 'ראשונות' : 'אחרונות'
+);
+
+const getEnglishListDirectionLabel = (result) => (
+  result?.sortDirection === 'asc' ? 'earliest' : 'latest'
+);
+
+const formatTransferRows = (items, userLanguage) => items
+  .map((tx, index) => (
+    userLanguage === 'he'
+      ? `העברה ${index + 1}\n--------------------\nסכום: ${tx.amount} ILS\nשולח: ${tx.fromEmail}\nמקבל: ${tx.toEmail}\nתאריך: ${formatDateForUser(tx.createdAt, userLanguage)}`
+      : `Transfer ${index + 1}\n--------------------\nAmount: ${tx.amount} ILS\nFrom: ${tx.fromEmail}\nTo: ${tx.toEmail}\nDate: ${formatDateForUser(tx.createdAt, userLanguage)}`
+  ))
+  .join('\n\n\n');
+
 export const getFriendlyErrorReply = (message, userLanguage) => {
   const normalized = String(message || '').toLowerCase().trim();
 
@@ -58,31 +92,26 @@ export const formatFinancialResponse = (toolName, result, userLanguage) => {
       return `שמך הוא ${result.firstName} ${result.lastName}. כתובת האימייל שלך היא ${result.email}.`;
     }
     if (toolName === 'count_transfers') {
-      return `ביצעת ${result.count} העברות בין ${formatDateForUser(result.from, userLanguage)} ל־${formatDateForUser(result.to, userLanguage)}.`;
+      return `ביצעת ${result.count} העברות${formatRangeForUser(result, userLanguage)}.`;
     }
     if (toolName === 'get_last_transfer') {
       return `ההעברה האחרונה הייתה ${result.amount} ILS\nשולח: ${result.fromEmail}\nמקבל: ${result.toEmail}\nתאריך: ${formatDateForUser(result.createdAt, userLanguage)}.`;
     }
     if (toolName === 'get_last_sent_transfer_to_recipient') {
       if (!result.items?.length) return 'לא נמצאו העברות עם איש הקשר שביקשת.';
-      const rows = result.items
-        .map((tx, index) => `העברה ${index + 1}\n--------------------\nסכום: ${tx.amount} ILS\nשולח: ${tx.fromEmail}\nמקבל: ${tx.toEmail}\nתאריך: ${formatDateForUser(tx.createdAt, userLanguage)}`)
-        .join('\n\n\n');
-      return `מצאתי ${result.items.length} העברות דו־כיווניות עם "${result.recipientName}" (גם ששלחת וגם שקיבלת):\n\n${rows}`;
+      const rows = formatTransferRows(result.items, userLanguage);
+      return `מצאתי ${result.items.length} העברות דו־כיווניות עם "${result.recipientName}"${formatRangeForUser(result, userLanguage)}:\n\n${rows}`;
     }
     if (toolName === 'get_recent_transfers') {
       if (!result.items?.length) return 'לא נמצאו העברות בטווח התאריכים שביקשת.';
-      const rows = result.items
-        .map((tx, index) => `העברה ${index + 1}\n--------------------\nסכום: ${tx.amount} ILS\nשולח: ${tx.fromEmail}\nמקבל: ${tx.toEmail}\nתאריך: ${formatDateForUser(tx.createdAt, userLanguage)}`)
-        .join('\n\n\n');
-      return `מצאתי עבורך ${result.items.length} העברות אחרונות בטווח שביקשת:\n\n${rows}`;
+      const rows = formatTransferRows(result.items, userLanguage);
+      return `מצאתי עבורך ${result.items.length} העברות ${getHebrewListDirectionLabel(result)}${formatRangeForUser(result, userLanguage)}:\n\n${rows}`;
     }
     if (toolName === 'get_first_n_transfers') {
       if (!result.items?.length) return 'לא נמצאו העברות בטווח התאריכים שביקשת.';
-      const rows = result.items
-        .map((tx, index) => `העברה ${index + 1}\n--------------------\nסכום: ${tx.amount} ILS\nשולח: ${tx.fromEmail}\nמקבל: ${tx.toEmail}\nתאריך: ${formatDateForUser(tx.createdAt, userLanguage)}`)
-        .join('\n\n\n');
-      return `מצאתי עבורך ${result.items.length} העברות בטווח שביקשת:\n\n${rows}`;
+      const rows = formatTransferRows(result.items, userLanguage);
+      const requested = result.requestedLimit || result.items.length;
+      return `מצאתי עבורך ${result.items.length} מתוך ${requested} העברות ${getHebrewListDirectionLabel(result)}${formatRangeForUser(result, userLanguage)}:\n\n${rows}`;
     }
   }
 
@@ -93,31 +122,26 @@ export const formatFinancialResponse = (toolName, result, userLanguage) => {
     return `Your name is ${result.firstName} ${result.lastName}. Your email is ${result.email}.`;
   }
   if (toolName === 'count_transfers') {
-    return `You made ${result.count} transfers between ${formatDateForUser(result.from, userLanguage)} and ${formatDateForUser(result.to, userLanguage)}.`;
+    return `You made ${result.count} transfers${formatRangeForUser(result, userLanguage)}.`;
   }
   if (toolName === 'get_last_transfer') {
     return `Your latest transfer was ${result.amount} ILS\nFrom: ${result.fromEmail}\nTo: ${result.toEmail}\nDate: ${formatDateForUser(result.createdAt, userLanguage)}.`;
   }
   if (toolName === 'get_last_sent_transfer_to_recipient') {
     if (!result.items?.length) return 'No transfers were found with that contact.';
-    const rows = result.items
-      .map((tx, index) => `Transfer ${index + 1}\n--------------------\nAmount: ${tx.amount} ILS\nFrom: ${tx.fromEmail}\nTo: ${tx.toEmail}\nDate: ${formatDateForUser(tx.createdAt, userLanguage)}`)
-      .join('\n\n\n');
-    return `I found ${result.items.length} bidirectional transfers with "${result.recipientName}" (both sent and received):\n\n${rows}`;
+    const rows = formatTransferRows(result.items, userLanguage);
+    return `I found ${result.items.length} bidirectional transfers with "${result.recipientName}"${formatRangeForUser(result, userLanguage)}:\n\n${rows}`;
   }
   if (toolName === 'get_recent_transfers') {
     if (!result.items?.length) return 'No transfers were found in the requested date range.';
-    const rows = result.items
-      .map((tx, index) => `Transfer ${index + 1}\n--------------------\nAmount: ${tx.amount} ILS\nFrom: ${tx.fromEmail}\nTo: ${tx.toEmail}\nDate: ${formatDateForUser(tx.createdAt, userLanguage)}`)
-      .join('\n\n\n');
-    return `I found ${result.items.length} recent transfers in your requested range:\n\n${rows}`;
+    const rows = formatTransferRows(result.items, userLanguage);
+    return `I found ${result.items.length} ${getEnglishListDirectionLabel(result)} transfers${formatRangeForUser(result, userLanguage)}:\n\n${rows}`;
   }
   if (toolName === 'get_first_n_transfers') {
     if (!result.items?.length) return 'No transfers were found in the requested date range.';
-    const rows = result.items
-      .map((tx, index) => `Transfer ${index + 1}\n--------------------\nAmount: ${tx.amount} ILS\nFrom: ${tx.fromEmail}\nTo: ${tx.toEmail}\nDate: ${formatDateForUser(tx.createdAt, userLanguage)}`)
-      .join('\n\n\n');
-    return `I found ${result.items.length} transfers in your requested range:\n\n${rows}`;
+    const rows = formatTransferRows(result.items, userLanguage);
+    const requested = result.requestedLimit || result.items.length;
+    return `I found ${result.items.length} of ${requested} ${getEnglishListDirectionLabel(result)} transfers${formatRangeForUser(result, userLanguage)}:\n\n${rows}`;
   }
 
   return 'Data retrieved successfully.';
