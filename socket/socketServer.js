@@ -1,8 +1,6 @@
 import { Server } from 'socket.io';
 import jwt from 'jsonwebtoken';
 import usersModel from '../models/usersModel.js';
-import accountsModel from '../models/accountsModel.js';
-import { findTransactionsByUserId } from '../models/transactionsModel.js';
 import { JWT_SECRET } from '../middleware/auth.js';
 import { generateAssistantReply } from '../ai/chatAssistant.js';
 import { getAllowedOrigins } from '../config/corsOrigins.js';
@@ -178,24 +176,13 @@ export const initSocketServer = (httpServer) => {
           return;
         }
 
-        const account = await accountsModel.findAccountByUserId(socket.user.id);
-        const transactions = await findTransactionsByUserId(socket.user.id);
-
-        const userContext = {
-          firstName: socket.user.firstName,
-          email: socket.user.email,
-          accountStatus: account?.status,
-          balance: account?.balance,
-          lastTransactions: transactions?.slice(0, 5)
-        };
-
         const { reply, nextHistory, nextTransferState, action } = await generateAssistantReply({
           userInput: text,
           userId: socket.user.id,
+          userEmail: normalizedEmail,
           history,
           transferState,
           transferPayload,
-          userContext,
           abortSignal: controller.signal
         });
 
