@@ -103,8 +103,8 @@ test('QueryExecutor sends latest transfer-history requests as descending created
   assert.equal(capturedArgs.limit, 3);
   assert.equal(capturedArgs.sort, 'desc');
   assert.deepEqual(capturedArgs.filters, { type: 'transfer' });
-  assert.equal(capturedArgs.startDate.toISOString(), '2026-05-01T00:00:00.000Z');
-  assert.equal(capturedArgs.endDate.toISOString(), '2026-05-31T23:59:59.999Z');
+  assert.equal(capturedArgs.startDate.toISOString(), '2026-04-30T21:00:00.000Z');
+  assert.equal(capturedArgs.endDate.toISOString(), '2026-05-31T20:59:59.999Z');
 });
 
 test('QueryExecutor sends earliest transfer-history requests as ascending createdAt queries', async () => {
