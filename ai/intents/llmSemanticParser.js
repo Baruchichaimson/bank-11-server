@@ -41,13 +41,18 @@ Decision policy:
 - Select toolName only from the catalog. If no banking tool fits, use domain unknown, intent unknown, and toolName null.
 - Do not answer general questions, FAQs, greetings, or unsupported banking questions. Route them to unknown.
 - contact_support requires a representative, support, service help, or video-call request. Generic greetings or casual help are unknown.
-- For transaction history requests, build semanticQuery from the catalog's canonical transaction type, action, dateRange, aggregation, limit, and recipientName rules.
+- For transaction history requests, build semanticQuery from the catalog's canonical transaction type, action, dateRange, aggregation, limit, recipientName, and optional sortDirection rules.
 - For generic transaction or activity history with no specific type, keep semanticQuery.action and semanticQuery.filters.type null.
 - Preserve explicit numeric limits when the user asks for them.
+- Extract written Hebrew and English numbers when a numeric field is requested. Examples: שתיים=2, שני=2, שתי=2, שלוש=3, שלושה=3, ארבע=4, חמישה=5, חמש=5, עשרים וחמש=25.
+- For transaction history with a requested row count, set semanticQuery.aggregation to first_n and semanticQuery.limit to the explicit number.
+- For Hebrew אחרונות / האחרונים / האחרונות / latest / most recent / newest, set semanticQuery.sortDirection to desc.
+- For Hebrew ראשונות / הראשונים / הראשונות / first / earliest / oldest, set semanticQuery.sortDirection to asc.
 - Resolve user date/time expressions into semanticQuery.dateRange with YYYY-MM-DD values. Use currentDate from the user message payload for relative ranges.
+- Interpret חודש שעבר, חודש קודם, החודש שעבר, החודש הקודם, last month, and previous month as the full previous calendar month relative to currentDate. Example: if currentDate is 2026-06-04, return {"from":"2026-05-01","to":"2026-05-31"}.
+- Interpret החודש / חודש נוכחי / this month as the current calendar month from day 1 through currentDate.
 - Keep semanticQuery.timeRange null. It is a legacy field and must not be used for new classifications.
 - Do not return database query syntax, Date objects, or createdAt filters. The application will map dateRange to createdAt bounds.
-- Extract written Hebrew and English numbers when a numeric field is requested.
 - For transfer_money, fill transferPayload only from values explicitly present in the current message.
 - Never invent missing transfer recipient, amount, description, or confirmation values.
 - If context resolves an otherwise ambiguous banking follow-up, set workflowContinuation true.
@@ -128,6 +133,7 @@ const ALLOWED_AGGREGATIONS = new Set(ALLOWED_AGGREGATION_VALUES);
 const ALLOWED_CORRECTION_FIELDS = new Set(ALLOWED_CORRECTION_FIELD_VALUES);
 const ALLOWED_CONFIRMATIONS = new Set(ALLOWED_CONFIRMATION_VALUES);
 const ALLOWED_TOOL_NAMES = new Set(ALLOWED_TOOL_NAME_VALUES);
+const ALLOWED_SORT_DIRECTIONS = new Set(['asc', 'desc']);
 
 const TOOL_BY_NAME = Object.fromEntries(TOOL_CATALOG.map((tool) => [tool.toolName, tool]));
 
@@ -279,6 +285,7 @@ export const validateSemanticQuery = (semanticQuery) => {
   const dateRange = validateDateRange(semanticQuery.dateRange);
   if (hasDateRangeInput(semanticQuery.dateRange) && !dateRange) return null;
   const aggregation = ALLOWED_AGGREGATIONS.has(semanticQuery.aggregation) ? semanticQuery.aggregation : 'list';
+  const sortDirection = ALLOWED_SORT_DIRECTIONS.has(semanticQuery.sortDirection) ? semanticQuery.sortDirection : null;
   const recipientName = normalizeStringField(semanticQuery.recipientName);
 
   if (aggregation === 'counterparty' && !recipientName) return null;
@@ -294,6 +301,7 @@ export const validateSemanticQuery = (semanticQuery) => {
   };
 
   if (dateRange) result.dateRange = dateRange;
+  if (sortDirection) result.sortDirection = sortDirection;
   if (recipientName) result.recipientName = recipientName;
   return result;
 };
