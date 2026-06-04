@@ -16,13 +16,13 @@ export class QueryExecutor {
     this.profileService = profileService;
   }
 
-  async execute({ userId, query }) {
+  async execute({ userId, userEmail = null, query }) {
     if (!query?.domain || !query?.intent) {
       throw new Error('Invalid structured query payload');
     }
 
     if (query.domain === 'transactions' && query.intent === 'transactions_query') {
-      return this.executeTransactionsQuery({ userId, query });
+      return this.executeTransactionsQuery({ userId, userEmail, query });
     }
 
     if (query.domain === 'account' && query.intent === 'get_balance') {
@@ -38,7 +38,7 @@ export class QueryExecutor {
     throw new Error(`Unsupported domain/intent: ${query.domain}/${query.intent}`);
   }
 
-  async executeTransactionsQuery({ userId, query }) {
+  async executeTransactionsQuery({ userId, userEmail = null, query }) {
     if (!this.transactionRepository) {
       throw new Error('transactionRepository is required for transactions_query');
     }
@@ -58,6 +58,7 @@ export class QueryExecutor {
     const { startDate, endDate } = normalizedRange;
     const baseArgs = {
       userId,
+      userEmail,
       filters: query.filters || {},
       startDate,
       endDate
@@ -75,6 +76,7 @@ export class QueryExecutor {
       const limit = Number.isInteger(query.limit) && query.limit > 0 ? query.limit : 10;
       const items = await this.transactionRepository.listCounterpartyByName({
         userId,
+        userEmail,
         recipientName,
         limit,
         startDate,
