@@ -5,22 +5,22 @@ import {
   ALLOWED_TOOL_NAMES as ALLOWED_TOOL_NAME_VALUES,
   formatResponseContractForPrompt,
   formatSemanticCatalogForPrompt
-} from './semanticCatalog.js';
-import { buildUserPromptPayload } from './llmPromptPayloadBuilder.js';
-import { logSemanticParserFailure } from './llmParserLogger.js';
+} from './before-llm/semanticCatalog.js';
+import { buildUserPromptPayload } from './before-llm/llmPromptPayloadBuilder.js';
+import { logSemanticParserFailure } from './after-llm/llmParserLogger.js';
 import {
   normalizeConfidenceField,
   normalizeEnumString,
   normalizeStringField
-} from './llmValueNormalizers.js';
-import { validateSemanticQuery } from './semanticQueryValidator.js';
+} from './after-llm/llmValueNormalizers.js';
+import { validateSemanticQuery } from './after-llm/semanticQueryValidator.js';
 import {
   validateCorrection,
   validateToolArgs,
   validateTransferPayload
-} from './transferPayloadValidator.js';
+} from './after-llm/transferPayloadValidator.js';
 
-export { validateSemanticQuery } from './semanticQueryValidator.js';
+export { validateSemanticQuery } from './after-llm/semanticQueryValidator.js';
 
 export const buildSemanticParserPrompt = () => {
   return `
