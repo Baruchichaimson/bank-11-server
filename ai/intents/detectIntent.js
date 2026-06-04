@@ -1,5 +1,4 @@
 import { parseQueryWithLlm } from './llmSemanticParser.js';
-import { parseQueryLocally } from './localSemanticParser.js';
 
 const UNKNOWN_PARSE = {
   source: 'safe_unknown',
@@ -32,28 +31,6 @@ export const detectIntent = async ({
   createChatCompletion,
   abortSignal
 }) => {
-  const locallyParsed = parseQueryLocally({
-    userInput,
-    history
-  });
-
-  if (locallyParsed) {
-    return {
-      intent: locallyParsed.intent,
-      confidence: locallyParsed.confidence,
-      domain: locallyParsed.domain,
-      semanticQuery: locallyParsed.semanticQuery,
-      source: locallyParsed.source,
-      workflowContinuation: Boolean(locallyParsed.workflowContinuation),
-      correction: locallyParsed.correction || null,
-      transferPayload: locallyParsed.transferPayload || null,
-      toolName: locallyParsed.toolName || null,
-      toolArgs: locallyParsed.toolArgs || {},
-      isAmbiguous: Boolean(locallyParsed.isAmbiguous),
-      ambiguityReason: locallyParsed.ambiguityReason || null
-    };
-  }
-
   const llmParsed = await parseQueryWithLlm({
     userInput,
     history,
