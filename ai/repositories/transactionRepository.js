@@ -1,10 +1,15 @@
 import { Transaction } from '../../entities/transactions.js';
 import { User } from '../../entities/users.js';
 
+const normalizeEmail = (value) => String(value || '').trim().toLowerCase();
+
 export class TransactionRepository {
-  async resolveUserEmail(userId) {
+  async resolveUserEmail({ userId, userEmail = null }) {
+    const normalized = normalizeEmail(userEmail);
+    if (normalized) return normalized;
+
     const user = await User.findById(userId).select('email').lean();
-    return user?.email || null;
+    return normalizeEmail(user?.email) || null;
   }
 
   buildMongoFilter({ email, filters = {}, startDate, endDate }) {
@@ -27,16 +32,16 @@ export class TransactionRepository {
     return query;
   }
 
-  async countBySemanticQuery({ userId, filters, startDate, endDate }) {
-    const email = await this.resolveUserEmail(userId);
+  async countBySemanticQuery({ userId, userEmail = null, filters, startDate, endDate }) {
+    const email = await this.resolveUserEmail({ userId, userEmail });
     if (!email) return 0;
 
     const query = this.buildMongoFilter({ email, filters, startDate, endDate });
     return Transaction.countDocuments(query);
   }
 
-  async listBySemanticQuery({ userId, filters, startDate, endDate, limit = null, sort = 'desc' }) {
-    const email = await this.resolveUserEmail(userId);
+  async listBySemanticQuery({ userId, userEmail = null, filters, startDate, endDate, limit = null, sort = 'desc' }) {
+    const email = await this.resolveUserEmail({ userId, userEmail });
     if (!email) return [];
 
     const query = this.buildMongoFilter({ email, filters, startDate, endDate });
@@ -49,8 +54,8 @@ export class TransactionRepository {
     return cursor.lean();
   }
 
-  async listCounterpartyByName({ userId, recipientName, limit = 10, startDate = null, endDate = null }) {
-    const email = await this.resolveUserEmail(userId);
+  async listCounterpartyByName({ userId, userEmail = null, recipientName, limit = 10, startDate = null, endDate = null }) {
+    const email = await this.resolveUserEmail({ userId, userEmail });
     if (!email) return [];
 
     const normalizedName = String(recipientName || '').trim();
