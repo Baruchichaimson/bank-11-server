@@ -26,12 +26,20 @@ export const BankingState = Annotation.Root({
   audit: Annotation()
 });
 
-export const createInitialBankingState = ({ userInput, history = [], userId, userLanguage = 'en', transferState = null }) => ({
+export const createInitialBankingState = ({
+  userInput,
+  history = [],
+  userId,
+  userEmail = null,
+  userLanguage = 'en',
+  transferState = null
+}) => ({
   userInput,
   history,
   userId,
   session: {
     userId,
+    userEmail,
     userLanguage,
     flowLanguage: transferState?.flowLanguage || userLanguage
   },
