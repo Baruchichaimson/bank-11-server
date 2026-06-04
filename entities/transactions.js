@@ -49,4 +49,7 @@ const transactionSchema = new mongoose.Schema(
   }
 );
 
-export const Transaction = mongoose.model("Transaction",transactionSchema);
+transactionSchema.index({ fromEmail: 1, createdAt: -1 });
+transactionSchema.index({ toEmail: 1, createdAt: -1 });
+
+export const Transaction = mongoose.model("Transaction", transactionSchema);
