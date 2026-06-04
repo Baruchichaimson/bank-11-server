@@ -258,13 +258,15 @@ const COMPACT_ROUTER_CONTRACT = {
       domain: 'account',
       intent: 'check_balance',
       toolName: 'get_balance',
-      useFor: ['current balance', 'available money', 'account balance', 'יתרה', 'יתרת חשבון', 'כמה כסף יש לי']
+      chooseWhen: 'current balance, available money, account balance, יתרה, יתרת חשבון, כמה כסף יש לי',
+      doNotChooseWhen: 'transaction history, transfer execution, profile details, or support'
     },
     {
       domain: 'transactions',
       intent: 'recent_transactions',
       semanticQueryRequired: true,
-      useFor: ['past activity', 'transaction history', 'list/count/filter transfers', 'העברות שביצעתי', 'פעולות אחרונות', 'כמה העברות'],
+      chooseWhen: 'past activity, transaction history, list/count/filter transfers, העברות שביצעתי, פעולות אחרונות, כמה העברות',
+      doNotChooseWhen: 'starting, confirming, correcting, or canceling a new transfer',
       semanticQuery: {
         domain: 'transactions',
         intent: 'transactions_query',
@@ -281,25 +283,29 @@ const COMPACT_ROUTER_CONTRACT = {
       domain: 'transactions',
       intent: 'transfer_money',
       toolName: 'open_money_transfer_inline',
-      useFor: ['start/continue/correct/confirm/cancel a new money transfer']
+      chooseWhen: 'start/continue/correct/confirm/cancel a new money transfer',
+      doNotChooseWhen: 'the user only asks to inspect past transfers or count existing transfers'
     },
     {
       domain: 'profile',
       intent: 'show_personal_details',
       toolName: 'get_user_identity',
-      useFor: ['stored user name', 'stored email', 'personal profile details']
+      chooseWhen: 'stored user name, stored email, personal profile details',
+      doNotChooseWhen: 'balance, transactions, support, or transfer execution'
     },
     {
       domain: 'support',
       intent: 'contact_support',
       toolName: 'open_video_call_window',
-      useFor: ['human representative', 'support interaction', 'video call']
+      chooseWhen: 'human representative, support interaction, video call',
+      doNotChooseWhen: 'generic greetings or ordinary banking actions'
     },
     {
       domain: 'unknown',
       intent: 'unknown',
       toolName: null,
-      useFor: ['unsupported', 'ambiguous', 'casual greeting only', 'confidence below 0.65']
+      chooseWhen: 'unsupported, ambiguous, casual greeting only, confidence below 0.65',
+      doNotChooseWhen: 'a supported workflow is clearly requested'
     }
   ],
   transactionRules: [
