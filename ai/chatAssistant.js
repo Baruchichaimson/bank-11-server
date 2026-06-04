@@ -26,6 +26,7 @@ const createChatCompletion = async (payload) => {
 export const generateAssistantReply = async ({
   userInput,
   userId,
+  userEmail = null,
   history = [],
   transferState = null,
   transferPayload = null,
@@ -52,6 +53,7 @@ export const generateAssistantReply = async ({
     return await runBankingGraph({
       userInput: trimmed,
       userId,
+      userEmail,
       history: shortHistory,
       transferState,
       transferPayload,
