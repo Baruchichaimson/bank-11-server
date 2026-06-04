@@ -13,13 +13,18 @@ const HEBREW_NUMBER_WORDS = new Map([
   ['חמישה', 5],
   ['שש', 6],
   ['שישה', 6],
+  ['ששת', 6],
   ['שבע', 7],
   ['שבעה', 7],
+  ['שבעת', 7],
   ['שמונה', 8],
+  ['שמונת', 8],
   ['תשע', 9],
   ['תשעה', 9],
+  ['תשעת', 9],
   ['עשר', 10],
   ['עשרה', 10],
+  ['עשרת', 10],
   ['אחד עשר', 11],
   ['אחת עשרה', 11],
   ['שנים עשר', 12],
@@ -52,6 +57,8 @@ const HEBREW_NUMBER_WORDS = new Map([
 ]);
 
 const MAX_LIMIT = 100;
+const TRANSACTION_NOUN_PATTERN = '(?:ה?העברות?|ה?העברה|ה?פעולות?|ה?פעולה|ה?טרנזקציות?|ה?טרנזקציה|transfers?|transactions?|activities|activity)';
+const ORDER_WORD_PATTERN = '(?:אחרונות|אחרונים|אחרונה|אחרון|ראשונות|ראשונים|ראשונה|ראשון|latest|newest|first|earliest|oldest|most\\s+recent)';
 
 const pad2 = (value) => String(value).padStart(2, '0');
 
@@ -110,34 +117,39 @@ const isCountQuestion = (text) => includesAny(text, [
 ]);
 
 const hasTransactionListNoun = (text) => includesAny(text, [
-  /העברות?/,
-  /פעולות?/,
-  /טרנזקציות?/,
-  /transfers?/i,
-  /transactions?/i,
-  /activity/i
+  new RegExp(TRANSACTION_NOUN_PATTERN, 'i')
 ]);
 
 const extractDigitLimit = (text) => {
-  const noun = '(?:העברות?|פעולות?|טרנזקציות?|transfers?|transactions?|activities)';
-  const beforeNoun = new RegExp(`(?:^|\\D)(\\d{1,3})\\s+${noun}`, 'i').exec(text);
+  const beforeNoun = new RegExp(`(?:^|\\D)(\\d{1,3})\\s+${TRANSACTION_NOUN_PATTERN}`, 'i').exec(text);
   if (beforeNoun) return clampLimit(Number(beforeNoun[1]));
 
-  const afterNoun = new RegExp(`${noun}\\s+(?:ה)?(?:אחרונות|אחרונים|ראשונות|ראשונים|latest|first|earliest|oldest)?\\s*(\\d{1,3})`, 'i').exec(text);
+  const afterNoun = new RegExp(`${TRANSACTION_NOUN_PATTERN}\\s+(?:ה)?${ORDER_WORD_PATTERN}?\\s*(\\d{1,3})`, 'i').exec(text);
   if (afterNoun) return clampLimit(Number(afterNoun[1]));
+
+  const beforeOrderWord = new RegExp(`(?:^|\\D)(\\d{1,3})\\s+(?:ה)?${ORDER_WORD_PATTERN}`, 'i').exec(text);
+  if (beforeOrderWord && hasTransactionListNoun(text)) return clampLimit(Number(beforeOrderWord[1]));
+
+  const detailRequest = new RegExp(`(?:פירוט|תראה|הצג|show|list)\\D{0,30}(\\d{1,3})\\D{0,30}${TRANSACTION_NOUN_PATTERN}`, 'i').exec(text);
+  if (detailRequest) return clampLimit(Number(detailRequest[1]));
 
   return null;
 };
 
+const escapeRegExp = (value) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
 const extractHebrewWordLimit = (text) => {
-  const nounPattern = '(?:העברות?|פעולות?|טרנזקציות?)';
   const entries = [...HEBREW_NUMBER_WORDS.entries()].sort((a, b) => b[0].length - a[0].length);
 
   for (const [word, value] of entries) {
-    const escaped = word.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    const beforeNoun = new RegExp(`(?:^|\\s)${escaped}\\s+${nounPattern}(?:\\s|$)`).test(text);
-    const afterNoun = new RegExp(`${nounPattern}\\s+${escaped}(?:\\s|$)`).test(text);
-    if (beforeNoun || afterNoun) return clampLimit(value);
+    const escaped = escapeRegExp(word);
+    const beforeNoun = new RegExp(`(?:^|\\s)${escaped}\\s+${TRANSACTION_NOUN_PATTERN}(?:\\s|$)`, 'i').test(text);
+    const afterNoun = new RegExp(`${TRANSACTION_NOUN_PATTERN}\\s+${escaped}(?:\\s|$)`, 'i').test(text);
+    const beforeOrderWord = new RegExp(`(?:^|\\s)${escaped}\\s+(?:ה)?${ORDER_WORD_PATTERN}(?:\\s|$)`, 'i').test(text);
+    const detailRequest = new RegExp(`(?:פירוט|תראה|הצג)\\s+(?:של\\s+)?${escaped}\\s+${TRANSACTION_NOUN_PATTERN}`, 'i').test(text);
+    if (beforeNoun || afterNoun || (beforeOrderWord && hasTransactionListNoun(text)) || detailRequest) {
+      return clampLimit(value);
+    }
   }
 
   return null;
@@ -160,7 +172,7 @@ const extractMonthsAgoCount = (text) => {
 
   for (const [word, value] of HEBREW_NUMBER_WORDS.entries()) {
     if (value > 12) continue;
-    const escaped = word.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const escaped = escapeRegExp(word);
     if (new RegExp(`לפני\\s+${escaped}\\s+חודשים?`).test(text)) return value;
   }
 
@@ -177,7 +189,7 @@ const extractLastNMonthsCount = (text) => {
 
   for (const [word, value] of HEBREW_NUMBER_WORDS.entries()) {
     if (value > 12) continue;
-    const escaped = word.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const escaped = escapeRegExp(word);
     if (new RegExp(`(?:ב|במהלך\\s+)?(?:ה)?${escaped}\\s+חודשים\\s+האחרונים`).test(text)) return value;
   }
 
@@ -259,7 +271,7 @@ export const normalizeTransactionSemanticQuery = ({ userInput, currentDate, sema
     normalized.timeRange = null;
   }
 
-  if (/העברות?|transfers?/i.test(text)) {
+  if (/ה?העברות?|ה?העברה|transfers?/i.test(text)) {
     normalized.action = 'transfer_money';
     normalized.filters.type = 'transfer';
   }
