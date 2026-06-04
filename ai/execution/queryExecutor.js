@@ -13,6 +13,14 @@ const normalizeSortDirection = (value, fallback = 'desc') => (
   value === 'asc' || value === 'desc' ? value : fallback
 );
 
+const buildResultMeta = ({ startDate, endDate, limit = null, sortDirection = null } = {}) => ({
+  from: startDate,
+  to: endDate,
+  hasDateRange: Boolean(startDate || endDate),
+  requestedLimit: limit,
+  sortDirection
+});
+
 export class QueryExecutor {
   constructor({ transactionRepository, accountService, profileService } = {}) {
     this.transactionRepository = transactionRepository;
@@ -88,7 +96,13 @@ export class QueryExecutor {
       });
       return {
         operation: 'get_last_sent_transfer_to_recipient',
-        result: { found: true, recipientName, count: items.length, items }
+        result: {
+          found: true,
+          recipientName,
+          count: items.length,
+          items,
+          ...buildResultMeta({ startDate, endDate, limit, sortDirection: 'desc' })
+        }
       };
     }
 
@@ -96,7 +110,7 @@ export class QueryExecutor {
       const count = await this.transactionRepository.countBySemanticQuery(baseArgs);
       return {
         operation: 'count_transfers',
-        result: { found: true, count, from: startDate, to: endDate }
+        result: { found: true, count, ...buildResultMeta({ startDate, endDate }) }
       };
     }
 
@@ -106,7 +120,12 @@ export class QueryExecutor {
       const items = await this.transactionRepository.listBySemanticQuery({ ...baseArgs, limit, sort });
       return {
         operation: 'get_first_n_transfers',
-        result: { found: true, count: items.length, items, from: startDate, to: endDate }
+        result: {
+          found: true,
+          count: items.length,
+          items,
+          ...buildResultMeta({ startDate, endDate, limit, sortDirection: sort })
+        }
       };
     }
 
@@ -116,7 +135,12 @@ export class QueryExecutor {
       const items = await this.transactionRepository.listBySemanticQuery({ ...baseArgs, limit, sort });
       return {
         operation: 'get_recent_transfers',
-        result: { found: true, count: items.length, items, from: startDate, to: endDate }
+        result: {
+          found: true,
+          count: items.length,
+          items,
+          ...buildResultMeta({ startDate, endDate, limit, sortDirection: sort })
+        }
       };
     }
 
