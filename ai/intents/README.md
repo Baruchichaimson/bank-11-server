@@ -6,38 +6,59 @@ This folder converts a user message into a safe structured intent for the bankin
 
 ```text
 userInput
-  -> detectIntent.js
+  -> before-llm/detectIntent.js
   -> llmSemanticParser.js
-  -> semanticQueryValidator.js
-  -> transactionQueryNormalizer.js
+  -> after-llm validators and normalizers
   -> workflow / query execution
 ```
 
-## Files
+`detectIntent.js` at the root is only a compatibility wrapper, so existing imports do not break.
 
-### detectIntent.js
-Entry point for intent detection.
+## Folder layout
+
+```text
+ai/intents/
+├── before-llm/
+│   ├── detectIntent.js
+│   ├── llmPromptPayloadBuilder.js
+│   └── semanticCatalog.js
+│
+├── after-llm/
+│   ├── llmParserLogger.js
+│   ├── llmValueNormalizers.js
+│   ├── semanticQueryValidator.js
+│   ├── transactionQueryNormalizer.js
+│   └── transferPayloadValidator.js
+│
+├── llmSemanticParser.js
+├── detectIntent.js
+└── README.md
+```
+
+## before-llm
+
+Files that prepare the request before calling the LLM.
+
+### before-llm/detectIntent.js
+The main intent-detection entry point.
 
 Responsibilities:
 - calls the LLM semantic parser
-- falls back to safe unknown when parsing fails
+- handles safe fallback when the LLM is unavailable or parsing fails
 - applies deterministic transaction normalization after the LLM result
 - returns the final intent object used by the graph
 
-### llmSemanticParser.js
-LLM adapter for semantic parsing.
+### before-llm/llmPromptPayloadBuilder.js
+Builds the user payload sent to the LLM.
 
 Responsibilities:
-- builds the system prompt
-- sends the current user message and recent conversation to the LLM
-- parses the JSON response
-- validates the parsed response
-- returns one normalized parser result
+- limits recent conversation history
+- trims long messages
+- normalizes message roles
+- adds currentDate and timeZone
 
-This file should stay small and orchestrate other helpers.
-
-### semanticCatalog.js
-The contract/catalog for the intent system.
+### before-llm/semanticCatalog.js
+The contract/catalog used to instruct the LLM.
 
 Responsibilities:
 - allowed domains
@@ -48,7 +69,46 @@ Responsibilities:
 
 Update this file when adding a new domain, intent, tool name, or semantic-query enum.
 
-### transactionQueryNormalizer.js
+## llmSemanticParser.js
+
+The adapter around the actual LLM call.
+
+Responsibilities:
+- builds the system prompt from `before-llm/semanticCatalog.js`
+- builds the user payload from `before-llm/llmPromptPayloadBuilder.js`
+- calls the LLM
+- parses the JSON response
+- sends the response through `after-llm` validators
+
+This file sits between the two folders because it is the actual model boundary.
+
+## after-llm
+
+Files that clean, validate, and correct the LLM response after it returns.
+
+### after-llm/llmValueNormalizers.js
+Small shared value-normalization helpers.
+
+Responsibilities:
+- converts string `"null"` to real null
+- normalizes enum strings
+- trims string fields
+- clamps confidence between 0 and 1
+
+### after-llm/semanticQueryValidator.js
+Validator for `semanticQuery` objects.
+
+Responsibilities:
+- validates `domain="transactions"`
+- validates `intent="transactions_query"`
+- validates action/type consistency
+- validates aggregation
+- clamps limit to the allowed range
+- validates ISO dateRange
+- validates sortDirection
+- validates recipientName for counterparty queries
+
+### after-llm/transactionQueryNormalizer.js
 Deterministic normalizer for transaction-history questions.
 
 Responsibilities:
@@ -62,22 +122,7 @@ Responsibilities:
 
 This file protects the product from LLM inconsistency.
 
-### semanticQueryValidator.js
-Validator for `semanticQuery` objects.
-
-Responsibilities:
-- validates `domain="transactions"`
-- validates `intent="transactions_query"`
-- validates action/type consistency
-- validates aggregation
-- clamps limit to the allowed range
-- validates ISO dateRange
-- validates sortDirection
-- validates recipientName for counterparty queries
-
-This file is the gatekeeper before query execution.
-
-### transferPayloadValidator.js
+### after-llm/transferPayloadValidator.js
 Validator for money-transfer workflow payloads.
 
 Responsibilities:
@@ -90,16 +135,7 @@ Responsibilities:
 
 This file is for starting, confirming, and correcting a new transfer, not for transaction history.
 
-### llmPromptPayloadBuilder.js
-Builds the user payload sent to the LLM.
-
-Responsibilities:
-- limits recent conversation history
-- trims long messages
-- normalizes message roles
-- adds currentDate and timeZone
-
-### llmParserLogger.js
+### after-llm/llmParserLogger.js
 Logging helpers for the LLM parser.
 
 Responsibilities:
@@ -107,19 +143,9 @@ Responsibilities:
 - truncates raw LLM output in logs
 - includes detailed logs only outside production or when debug is enabled
 
-### llmValueNormalizers.js
-Small shared value-normalization helpers.
-
-Responsibilities:
-- converts string `"null"` to real null
-- normalizes enum strings
-- trims string fields
-- clamps confidence between 0 and 1
-
 ## Rule of thumb
 
-- If the file talks to the LLM: use `llmSemanticParser.js`.
-- If the file fixes transaction-history meaning from the original text: use `transactionQueryNormalizer.js`.
-- If the file validates safe structured query shape: use `semanticQueryValidator.js`.
-- If the file validates new-transfer payload fields: use `transferPayloadValidator.js`.
-- If the file changes the allowed contract/enums: use `semanticCatalog.js`.
+- Before the LLM call: use `before-llm/`.
+- The actual LLM call: use `llmSemanticParser.js`.
+- After the LLM returns: use `after-llm/`.
+- Keep root files only as compatibility wrappers when external imports still depend on them.
