@@ -25,6 +25,7 @@ const leverageDataNode = async (state, config) => {
 
   const { operation, result } = await services.transactionService.executeStructuredQuery({
     userId: state.session.userId,
+    userEmail: state.session.userEmail,
     query: semanticQuery
   });
 
