@@ -9,6 +9,10 @@ const normalizeListLimit = (value, fallback) => {
   return Math.min(value, MAX_TRANSACTION_LIST_LIMIT);
 };
 
+const normalizeSortDirection = (value, fallback = 'desc') => (
+  value === 'asc' || value === 'desc' ? value : fallback
+);
+
 export class QueryExecutor {
   constructor({ transactionRepository, accountService, profileService } = {}) {
     this.transactionRepository = transactionRepository;
@@ -98,7 +102,8 @@ export class QueryExecutor {
 
     if (query.aggregation === 'first_n') {
       const limit = normalizeListLimit(query.limit, DEFAULT_FIRST_N_LIMIT);
-      const items = await this.transactionRepository.listBySemanticQuery({ ...baseArgs, limit, sort: 'desc' });
+      const sort = normalizeSortDirection(query.sortDirection, 'desc');
+      const items = await this.transactionRepository.listBySemanticQuery({ ...baseArgs, limit, sort });
       return {
         operation: 'get_first_n_transfers',
         result: { found: true, count: items.length, items, from: startDate, to: endDate }
@@ -107,7 +112,8 @@ export class QueryExecutor {
 
     if (query.aggregation === 'list' || !query.aggregation) {
       const limit = normalizeListLimit(query.limit, DEFAULT_TRANSACTION_LIST_LIMIT);
-      const items = await this.transactionRepository.listBySemanticQuery({ ...baseArgs, limit, sort: 'desc' });
+      const sort = normalizeSortDirection(query.sortDirection, 'desc');
+      const items = await this.transactionRepository.listBySemanticQuery({ ...baseArgs, limit, sort });
       return {
         operation: 'get_recent_transfers',
         result: { found: true, count: items.length, items, from: startDate, to: endDate }
