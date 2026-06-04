@@ -15,8 +15,8 @@ export const createTransactionService = ({ executeBankTool, accountService, prof
   });
 
   return {
-    async executeStructuredQuery({ userId, query }) {
-      return queryExecutor.execute({ userId, query });
+    async executeStructuredQuery({ userId, userEmail = null, query }) {
+      return queryExecutor.execute({ userId, userEmail, query });
     },
 
     async getTransactions({ userId, args = {} }) {
