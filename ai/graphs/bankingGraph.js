@@ -124,6 +124,7 @@ const graph = new StateGraph(BankingState)
 export const runBankingGraph = async ({
   userInput,
   userId,
+  userEmail = null,
   history = [],
   transferState = null,
   transferPayload = null,
@@ -136,6 +137,7 @@ export const runBankingGraph = async ({
     userInput: String(userInput || '').trim(),
     history,
     userId,
+    userEmail,
     userLanguage,
     transferState
   });
