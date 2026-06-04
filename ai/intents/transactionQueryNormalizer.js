@@ -1,6 +1,8 @@
-const HEBREW_NUMBER_WORDS = new Map([
+const HEBREW_UNITS = new Map([
   ['אחד', 1],
   ['אחת', 1],
+  ['ראשון', 1],
+  ['ראשונה', 1],
   ['שני', 2],
   ['שתי', 2],
   ['שתיים', 2],
@@ -21,7 +23,10 @@ const HEBREW_NUMBER_WORDS = new Map([
   ['שמונת', 8],
   ['תשע', 9],
   ['תשעה', 9],
-  ['תשעת', 9],
+  ['תשעת', 9]
+]);
+
+const HEBREW_TEENS = new Map([
   ['עשר', 10],
   ['עשרה', 10],
   ['עשרת', 10],
@@ -29,6 +34,8 @@ const HEBREW_NUMBER_WORDS = new Map([
   ['אחת עשרה', 11],
   ['שנים עשר', 12],
   ['שתים עשרה', 12],
+  ['שתיים עשרה', 12],
+  ['שניים עשר', 12],
   ['שלושה עשר', 13],
   ['שלוש עשרה', 13],
   ['ארבעה עשר', 14],
@@ -42,18 +49,19 @@ const HEBREW_NUMBER_WORDS = new Map([
   ['שמונה עשר', 18],
   ['שמונה עשרה', 18],
   ['תשעה עשר', 19],
-  ['תשע עשרה', 19],
+  ['תשע עשרה', 19]
+]);
+
+const HEBREW_TENS = new Map([
   ['עשרים', 20],
-  ['עשרים ואחד', 21],
-  ['עשרים ואחת', 21],
-  ['עשרים ושניים', 22],
-  ['עשרים ושתיים', 22],
-  ['עשרים ושלוש', 23],
-  ['עשרים ושלושה', 23],
-  ['עשרים וארבע', 24],
-  ['עשרים וארבעה', 24],
-  ['עשרים וחמש', 25],
-  ['עשרים וחמישה', 25]
+  ['שלושים', 30],
+  ['ארבעים', 40],
+  ['חמישים', 50],
+  ['שישים', 60],
+  ['שבעים', 70],
+  ['שמונים', 80],
+  ['תשעים', 90],
+  ['מאה', 100]
 ]);
 
 const MAX_LIMIT = 100;
@@ -98,6 +106,7 @@ const currentMonthRange = (currentDate) => ({
 const normalizeText = (value) => String(value || '')
   .trim()
   .replace(/[־–—]/g, '-')
+  .replace(/["'.,!?;:()[\]{}]/g, ' ')
   .replace(/\s+/g, ' ')
   .toLowerCase();
 
@@ -120,6 +129,64 @@ const hasTransactionListNoun = (text) => includesAny(text, [
   new RegExp(TRANSACTION_NOUN_PATTERN, 'i')
 ]);
 
+const parseNumberToken = (token) => {
+  const numeric = Number(token);
+  return clampLimit(Number.isInteger(numeric) ? numeric : null);
+};
+
+const cleanHebrewNumberPhrase = (phrase) => String(phrase || '')
+  .trim()
+  .replace(/[־-]/g, ' ')
+  .replace(/\s+/g, ' ')
+  .replace(/^(?:של|את|ה)\s+/, '')
+  .trim();
+
+const parseHebrewNumberPhrase = (phrase) => {
+  const cleaned = cleanHebrewNumberPhrase(phrase);
+  if (!cleaned) return null;
+
+  const directDigit = parseNumberToken(cleaned);
+  if (directDigit) return directDigit;
+
+  if (cleaned === 'מאה') return 100;
+  if (HEBREW_UNITS.has(cleaned)) return HEBREW_UNITS.get(cleaned);
+  if (HEBREW_TEENS.has(cleaned)) return HEBREW_TEENS.get(cleaned);
+  if (HEBREW_TENS.has(cleaned)) return HEBREW_TENS.get(cleaned);
+
+  const parts = cleaned.split(' ').filter(Boolean);
+  if (parts.length === 2) {
+    const [tensWord, rawUnitWord] = parts;
+    const unitWord = rawUnitWord.replace(/^ו/, '');
+    const tens = HEBREW_TENS.get(tensWord);
+    const unit = HEBREW_UNITS.get(unitWord);
+    if (tens && tens < 100 && unit) return clampLimit(tens + unit);
+  }
+
+  if (parts.length === 3 && parts[1] === 'ו') {
+    const tens = HEBREW_TENS.get(parts[0]);
+    const unit = HEBREW_UNITS.get(parts[2]);
+    if (tens && tens < 100 && unit) return clampLimit(tens + unit);
+  }
+
+  return null;
+};
+
+const tokenLooksLikeTransactionNoun = (token) => new RegExp(`^${TRANSACTION_NOUN_PATTERN}$`, 'i').test(token);
+const tokenLooksLikeOrderWord = (token) => new RegExp(`^${ORDER_WORD_PATTERN}$`, 'i').test(token);
+
+const parseNumberNearToken = ({ tokens, index, direction }) => {
+  const windows = direction === 'before'
+    ? [4, 3, 2, 1].map((size) => tokens.slice(Math.max(0, index - size), index))
+    : [4, 3, 2, 1].map((size) => tokens.slice(index + 1, index + 1 + size));
+
+  for (const window of windows) {
+    const parsed = parseHebrewNumberPhrase(window.join(' ')) || parseNumberToken(window.join(' '));
+    if (parsed) return parsed;
+  }
+
+  return null;
+};
+
 const extractDigitLimit = (text) => {
   const beforeNoun = new RegExp(`(?:^|\\D)(\\d{1,3})\\s+${TRANSACTION_NOUN_PATTERN}`, 'i').exec(text);
   if (beforeNoun) return clampLimit(Number(beforeNoun[1]));
@@ -130,25 +197,22 @@ const extractDigitLimit = (text) => {
   const beforeOrderWord = new RegExp(`(?:^|\\D)(\\d{1,3})\\s+(?:ה)?${ORDER_WORD_PATTERN}`, 'i').exec(text);
   if (beforeOrderWord && hasTransactionListNoun(text)) return clampLimit(Number(beforeOrderWord[1]));
 
-  const detailRequest = new RegExp(`(?:פירוט|תראה|הצג|show|list)\\D{0,30}(\\d{1,3})\\D{0,30}${TRANSACTION_NOUN_PATTERN}`, 'i').exec(text);
+  const detailRequest = new RegExp(`(?:פירוט|תראה|הצג|show|list)\\D{0,40}(\\d{1,3})\\D{0,40}${TRANSACTION_NOUN_PATTERN}`, 'i').exec(text);
   if (detailRequest) return clampLimit(Number(detailRequest[1]));
 
   return null;
 };
 
-const escapeRegExp = (value) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-
 const extractHebrewWordLimit = (text) => {
-  const entries = [...HEBREW_NUMBER_WORDS.entries()].sort((a, b) => b[0].length - a[0].length);
+  const tokens = text.split(' ').filter(Boolean);
 
-  for (const [word, value] of entries) {
-    const escaped = escapeRegExp(word);
-    const beforeNoun = new RegExp(`(?:^|\\s)${escaped}\\s+${TRANSACTION_NOUN_PATTERN}(?:\\s|$)`, 'i').test(text);
-    const afterNoun = new RegExp(`${TRANSACTION_NOUN_PATTERN}\\s+${escaped}(?:\\s|$)`, 'i').test(text);
-    const beforeOrderWord = new RegExp(`(?:^|\\s)${escaped}\\s+(?:ה)?${ORDER_WORD_PATTERN}(?:\\s|$)`, 'i').test(text);
-    const detailRequest = new RegExp(`(?:פירוט|תראה|הצג)\\s+(?:של\\s+)?${escaped}\\s+${TRANSACTION_NOUN_PATTERN}`, 'i').test(text);
-    if (beforeNoun || afterNoun || (beforeOrderWord && hasTransactionListNoun(text)) || detailRequest) {
-      return clampLimit(value);
+  for (let i = 0; i < tokens.length; i += 1) {
+    if (tokenLooksLikeTransactionNoun(tokens[i]) || tokenLooksLikeOrderWord(tokens[i])) {
+      const before = parseNumberNearToken({ tokens, index: i, direction: 'before' });
+      if (before && hasTransactionListNoun(text)) return before;
+
+      const after = parseNumberNearToken({ tokens, index: i, direction: 'after' });
+      if (after && hasTransactionListNoun(text)) return after;
     }
   }
 
@@ -167,14 +231,16 @@ const detectSortDirection = (text) => {
 };
 
 const extractMonthsAgoCount = (text) => {
-  const digit = /לפני\s+(\d{1,2})\s+חודשים?/.exec(text);
-  if (digit) return Number(digit[1]);
+  const digit = /לפני\s+(\d{1,3})\s+חודשים?/.exec(text);
+  if (digit) return clampLimit(Number(digit[1]));
 
-  for (const [word, value] of HEBREW_NUMBER_WORDS.entries()) {
-    if (value > 12) continue;
-    const escaped = escapeRegExp(word);
-    if (new RegExp(`לפני\\s+${escaped}\\s+חודשים?`).test(text)) return value;
-  }
+  const tokens = text.split(' ').filter(Boolean);
+  const monthIndex = tokens.findIndex((token) => /^חודשים?$/.test(token));
+  const beforeBeforeMonth = monthIndex > 0 && tokens[monthIndex - 2] === 'לפני'
+    ? parseHebrewNumberPhrase(tokens.slice(monthIndex - 1, monthIndex).join(' '))
+      || parseHebrewNumberPhrase(tokens.slice(Math.max(0, monthIndex - 3), monthIndex).join(' '))
+    : null;
+  if (beforeBeforeMonth) return beforeBeforeMonth;
 
   if (/לפני\s+חודשיים/.test(text)) return 2;
   if (/לפני\s+חודש/.test(text)) return 1;
@@ -182,19 +248,20 @@ const extractMonthsAgoCount = (text) => {
 };
 
 const extractLastNMonthsCount = (text) => {
-  const digit = /(?:ב|במהלך\s+)?(?:ה)?(\d{1,2})\s+חודשים\s+האחרונים/.exec(text);
-  if (digit) return Number(digit[1]);
+  const digit = /(?:ב|במהלך\s+)?(?:ה)?(\d{1,3})\s+חודשים\s+האחרונים/.exec(text);
+  if (digit) return clampLimit(Number(digit[1]));
 
   if (/בחודשיים\s+האחרונים|במהלך\s+החודשיים\s+האחרונים/.test(text)) return 2;
 
-  for (const [word, value] of HEBREW_NUMBER_WORDS.entries()) {
-    if (value > 12) continue;
-    const escaped = escapeRegExp(word);
-    if (new RegExp(`(?:ב|במהלך\\s+)?(?:ה)?${escaped}\\s+חודשים\\s+האחרונים`).test(text)) return value;
+  const tokens = text.split(' ').filter(Boolean);
+  const monthsIndex = tokens.findIndex((token, index) => /^חודשים$/.test(token) && /^האחרונים$/.test(tokens[index + 1] || ''));
+  if (monthsIndex > 0) {
+    const parsed = parseHebrewNumberPhrase(tokens.slice(Math.max(0, monthsIndex - 4), monthsIndex).join(' '));
+    if (parsed) return parsed;
   }
 
-  const english = /(?:last|past)\s+(\d{1,2})\s+months/i.exec(text);
-  if (english) return Number(english[1]);
+  const english = /(?:last|past)\s+(\d{1,3})\s+months/i.exec(text);
+  if (english) return clampLimit(Number(english[1]));
   return null;
 };
 
