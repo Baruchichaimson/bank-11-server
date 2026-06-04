@@ -251,6 +251,69 @@ export const RESPONSE_CONTRACT = {
   }
 };
 
-export const formatResponseContractForPrompt = () => JSON.stringify(RESPONSE_CONTRACT, null, 2);
+const COMPACT_ROUTER_CONTRACT = {
+  output: RESPONSE_CONTRACT,
+  intents: [
+    {
+      domain: 'account',
+      intent: 'check_balance',
+      toolName: 'get_balance',
+      useFor: ['current balance', 'available money', 'account balance', 'יתרה', 'יתרת חשבון', 'כמה כסף יש לי']
+    },
+    {
+      domain: 'transactions',
+      intent: 'recent_transactions',
+      semanticQueryRequired: true,
+      useFor: ['past activity', 'transaction history', 'list/count/filter transfers', 'העברות שביצעתי', 'פעולות אחרונות', 'כמה העברות'],
+      semanticQuery: {
+        domain: 'transactions',
+        intent: 'transactions_query',
+        action: ALLOWED_ACTIONS,
+        filters: { type: ALLOWED_TYPES },
+        timeRange: null,
+        dateRange: { from: 'YYYY-MM-DD|null', to: 'YYYY-MM-DD|null' },
+        aggregation: ALLOWED_AGGREGATIONS,
+        limit: 'explicit user row limit or null',
+        recipientName: 'explicit counterparty name or null'
+      }
+    },
+    {
+      domain: 'transactions',
+      intent: 'transfer_money',
+      toolName: 'open_money_transfer_inline',
+      useFor: ['start/continue/correct/confirm/cancel a new money transfer']
+    },
+    {
+      domain: 'profile',
+      intent: 'show_personal_details',
+      toolName: 'get_user_identity',
+      useFor: ['stored user name', 'stored email', 'personal profile details']
+    },
+    {
+      domain: 'support',
+      intent: 'contact_support',
+      toolName: 'open_video_call_window',
+      useFor: ['human representative', 'support interaction', 'video call']
+    },
+    {
+      domain: 'unknown',
+      intent: 'unknown',
+      toolName: null,
+      useFor: ['unsupported', 'ambiguous', 'casual greeting only', 'confidence below 0.65']
+    }
+  ],
+  transactionRules: [
+    'past/list/show/history/filter existing activity => recent_transactions',
+    'how many/count/number of activities => aggregation count and limit null',
+    'N newest/latest/recent rows => aggregation first_n and limit N',
+    'show matching activity without explicit count => aggregation list',
+    'transfer history => action transfer_money and filters.type transfer',
+    'generic activity history => action null and filters.type null',
+    'resolve relative dates using currentDate from payload; return YYYY-MM-DD only',
+    'European/Hebrew numeric dates are day/month/year'
+  ]
+};
 
-export const formatSemanticCatalogForPrompt = () => JSON.stringify(SEMANTIC_CATALOG, null, 2);
+export const formatResponseContractForPrompt = () => JSON.stringify(RESPONSE_CONTRACT);
+
+export const formatSemanticCatalogForPrompt = () => JSON.stringify(COMPACT_ROUTER_CONTRACT);
