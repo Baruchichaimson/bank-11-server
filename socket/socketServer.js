@@ -2,7 +2,7 @@ import { Server } from 'socket.io';
 import jwt from 'jsonwebtoken';
 import usersModel from '../models/usersModel.js';
 import { JWT_SECRET } from '../middleware/auth.js';
-import { generateAssistantReply } from '../ai/chatAssistant.js';
+import { generateAssistantReply } from '../ai/assistant/chatAssistant.js';
 import { getAllowedOrigins } from '../config/corsOrigins.js';
 import { SOCKET_EVENTS } from './socketEvents.js';
 

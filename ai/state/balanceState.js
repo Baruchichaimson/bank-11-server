@@ -1,4 +1,1 @@
-export const createBalanceState = () => ({
-  currentBalance: null,
-  accountSummary: null
-});
+export * from '../graph/state/balanceState.js';

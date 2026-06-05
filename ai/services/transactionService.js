@@ -5,7 +5,7 @@ import {
   transferMoney
 } from '../../models/transactionsModel.js';
 import { TransactionRepository } from '../repositories/transactionRepository.js';
-import { QueryExecutor } from '../execution/queryExecutor.js';
+import { QueryExecutor } from './queryExecutor.js';
 
 const toIso = (value) => {
   if (!value) return null;

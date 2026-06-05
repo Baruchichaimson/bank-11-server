@@ -1,5 +1,5 @@
 import express from 'express';
-import { AI_PROVIDER, OPENAI_MODEL, hasOpenAiKey } from '../ai/openaiClient.js';
+import { AI_PROVIDER, OPENAI_MODEL, hasOpenAiKey } from '../ai/assistant/openaiClient.js';
 
 const router = express.Router();
 

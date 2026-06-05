@@ -1,5 +1,1 @@
-export const createTransactionsState = () => ({
-  filters: {},
-  dateRange: null,
-  transactionType: null
-});
+export * from '../graph/state/transactionsState.js';

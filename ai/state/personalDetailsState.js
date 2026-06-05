@@ -1,3 +1,1 @@
-export const createPersonalDetailsState = () => ({
-  userProfile: null
-});
+export * from '../graph/state/personalDetailsState.js';

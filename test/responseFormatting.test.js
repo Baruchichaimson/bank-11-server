@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { getFriendlyErrorReply, formatFinancialResponse } from '../ai/shared/responseFormatting.js';
+import { getFriendlyErrorReply, formatFinancialResponse } from '../ai/assistant/responseFormatting.js';
 
 test('getFriendlyErrorReply returns localized unauthorized message', () => {
   assert.match(getFriendlyErrorReply('unauthorized', 'en'), /sign in again/i);

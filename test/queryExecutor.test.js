@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { QueryExecutor } from '../ai/execution/queryExecutor.js';
-import { normalizeTimeRange } from '../ai/execution/timeRangeNormalizer.js';
+import { QueryExecutor } from '../ai/services/queryExecutor.js';
+import { normalizeTimeRange } from '../ai/services/timeRangeNormalizer.js';
 
 const createTransactionRepositoryStub = (calls = []) => ({
   countBySemanticQuery: async (args) => {

@@ -1,4 +1,1 @@
-export const createSupportState = () => ({
-  supportReason: '',
-  ticketId: null
-});
+export * from '../graph/state/supportState.js';

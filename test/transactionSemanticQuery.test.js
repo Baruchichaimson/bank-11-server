@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { buildSemanticParserPrompt, validateLlmSemanticParse } from '../ai/intents/llmSemanticParser.js';
-import { QueryExecutor } from '../ai/execution/queryExecutor.js';
+import { QueryExecutor } from '../ai/services/queryExecutor.js';
 import { TransactionRepository } from '../ai/repositories/transactionRepository.js';
 
 const buildTransactionParse = ({ limit, dateRange, sortDirection, direction = null }) => validateLlmSemanticParse({

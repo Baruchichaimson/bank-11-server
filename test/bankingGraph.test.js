@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { runBankingGraph } from '../ai/graphs/bankingGraph.js';
-import { routeWorkflow } from '../ai/router/workflowRouter.js';
+import { runBankingGraph } from '../ai/graph/bankingGraph.js';
+import { routeWorkflow } from '../ai/graph/workflowRouter.js';
 import { createBusinessServices } from '../ai/services/businessServices.js';
 
 const services = createBusinessServices();
