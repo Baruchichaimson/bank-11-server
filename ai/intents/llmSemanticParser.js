@@ -102,7 +102,6 @@ const INTENT_ALIASES = {
   account_summary: 'check_balance',
   balance: 'check_balance',
   get_recent_transfers: 'recent_transactions',
-  get_last_transfer: 'recent_transactions',
   count_transfers: 'recent_transactions',
   get_last_sent_transfer_to_recipient: 'recent_transactions',
   transactions_query: 'recent_transactions',
@@ -138,19 +137,6 @@ const normalizeToolName = (value) => {
 const buildSemanticQueryFromTool = ({ toolName, toolArgs = {}, semanticQuery = null }) => {
   if (!toolName) return semanticQuery;
   if (semanticQuery) return semanticQuery;
-
-  if (toolName === 'get_last_transfer') {
-    return {
-      domain: 'transactions',
-      intent: 'transactions_query',
-      action: 'transfer_money',
-      filters: { type: 'transfer' },
-      timeRange: null,
-      aggregation: 'first_n',
-      limit: 1,
-      recipientName: null
-    };
-  }
 
   if (toolName === 'count_transfers') {
     return {
