@@ -12,8 +12,6 @@ userInput
   -> workflow / query execution
 ```
 
-`detectIntent.js` at the root is only a compatibility wrapper, so existing imports do not break.
-
 ## Folder layout
 
 ```text
@@ -31,7 +29,6 @@ ai/intents/
 │   └── transferPayloadValidator.js
 │
 ├── llmSemanticParser.js
-├── detectIntent.js
 └── README.md
 ```
 
@@ -148,4 +145,4 @@ Responsibilities:
 - Before the LLM call: use `before-llm/`.
 - The actual LLM call: use `llmSemanticParser.js`.
 - After the LLM returns: use `after-llm/`.
-- Keep root files only as compatibility wrappers when external imports still depend on them.
+- Do not add duplicate files with the same responsibility at the root of `ai/intents`.
