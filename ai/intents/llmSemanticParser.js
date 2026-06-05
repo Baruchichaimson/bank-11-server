@@ -19,6 +19,10 @@ import {
   validateToolArgs,
   validateTransferPayload
 } from './after-llm/transferPayloadValidator.js';
+import {
+  createAmbiguousIntent,
+  createIntentResult
+} from '../contracts/intentResultContract.js';
 
 export { validateSemanticQuery } from './after-llm/semanticQueryValidator.js';
 
@@ -40,12 +44,14 @@ ${formatSemanticCatalogForPrompt()}
 
 Core routing:
 - classify by the meaning of the requested action, not by keyword overlap.
-- balance/current money => domain account, intent check_balance, toolName get_balance.
+- Prefer semantic intent/query fields over toolName.
+- balance/current money => domain account, intent check_balance, semanticQuery null, toolName null.
 - past activity/history/list/count/filter existing transactions => domain transactions, intent recent_transactions.
 - starting/confirming/correcting/canceling a new transfer => domain transactions, intent transfer_money.
 - stored user identity/profile details => domain profile, intent show_personal_details.
 - representative/support/video call => domain support, intent contact_support.
 - unsupported, casual, or ambiguous input => domain unknown, intent unknown, toolName null.
+- toolName is legacy compatibility. Use it only for UI actions or legacy payloads; do not use toolName as the primary way to request banking data.
 
 Transaction history parameter extraction:
 - Always return semanticQuery for recent_transactions.
@@ -80,6 +86,7 @@ const ALLOWED_DOMAINS = new Set(ALLOWED_DOMAIN_VALUES);
 const ALLOWED_INTENTS = new Set(ALLOWED_INTENT_VALUES);
 const ALLOWED_TOOL_NAMES = new Set(ALLOWED_TOOL_NAME_VALUES);
 const TOOL_BY_NAME = Object.fromEntries(TOOL_CATALOG.map((tool) => [tool.toolName, tool]));
+const UI_ACTION_TOOL_NAMES = new Set(['open_money_transfer_inline', 'open_video_call_window']);
 
 const DOMAIN_ALIASES = {
   balance: 'account',
@@ -87,6 +94,7 @@ const DOMAIN_ALIASES = {
   identity: 'profile',
   user: 'profile',
   personal: 'profile',
+  transfer: 'transactions',
   transfers: 'transactions',
   transaction: 'transactions',
   representative: 'support',
@@ -134,9 +142,8 @@ const normalizeToolName = (value) => {
   return ALLOWED_TOOL_NAMES.has(normalized) ? normalized : null;
 };
 
-const buildSemanticQueryFromTool = ({ toolName, toolArgs = {}, semanticQuery = null }) => {
-  if (!toolName) return semanticQuery;
-  if (semanticQuery) return semanticQuery;
+const buildLegacySemanticQueryFromTool = ({ toolName, toolArgs = {} }) => {
+  if (!toolName) return null;
 
   if (toolName === 'count_transfers') {
     return {
@@ -179,24 +186,28 @@ const buildSemanticQueryFromTool = ({ toolName, toolArgs = {}, semanticQuery = n
     };
   }
 
-  return semanticQuery;
+  return null;
 };
 
 export const validateLlmSemanticParse = (payload) => {
   if (!payload || typeof payload !== 'object') return null;
 
-  const toolName = normalizeToolName(payload.toolName || payload.tool || payload.name);
-  const toolArgs = validateToolArgs(payload.toolArgs || payload.args);
+  const rawTool = payload.tool && typeof payload.tool === 'object' ? payload.tool : null;
+  const toolName = normalizeToolName(payload.toolName || rawTool?.name || payload.tool || payload.name);
+  const toolArgs = validateToolArgs(payload.toolArgs || rawTool?.args || payload.args);
   const domain = normalizeDomain(payload.domain, toolName);
   const intent = normalizeIntent(payload.intent, toolName);
-  const workflowContinuation = Boolean(payload.workflowContinuation);
+  const workflowContinuation = payload.workflowContinuation;
   const correction = validateCorrection(payload.correction);
   const transferPayload = validateTransferPayload(payload.transferPayload);
   const modelConfidence = normalizeConfidenceField(payload.confidence);
   const isAmbiguous = payload.isAmbiguous === true;
   const ambiguityReason = normalizeStringField(payload.ambiguityReason);
+  const hasSemanticQueryInput = payload.semanticQuery && typeof payload.semanticQuery === 'object';
+  const shouldKeepTool = Boolean(toolName && (UI_ACTION_TOOL_NAMES.has(toolName) || !hasSemanticQueryInput));
+  const outputTool = shouldKeepTool ? { name: toolName, args: toolArgs } : null;
 
-  const buildResult = ({ resultDomain, resultIntent, defaultConfidence, semanticQuery = null }) => ({
+  const buildResult = ({ resultDomain, resultIntent, defaultConfidence, semanticQuery = null }) => createIntentResult({
     source: 'llm_semantic_parser',
     domain: resultDomain,
     intent: resultIntent,
@@ -205,18 +216,25 @@ export const validateLlmSemanticParse = (payload) => {
     workflowContinuation,
     correction,
     transferPayload,
-    toolName,
-    toolArgs,
-    isAmbiguous,
-    ambiguityReason
+    tool: outputTool,
+    ambiguity: isAmbiguous
+      ? { isAmbiguous: true, reason: ambiguityReason }
+      : null
   });
 
-  if (isAmbiguous || (modelConfidence !== null && modelConfidence < 0.65)) {
-    return buildResult({
-      resultDomain: 'unknown',
-      resultIntent: 'unknown',
-      defaultConfidence: 0
+  if (isAmbiguous) {
+    return createAmbiguousIntent({
+      source: 'llm_semantic_parser',
+      reason: ambiguityReason,
+      workflowContinuation,
+      correction,
+      transferPayload,
+      tool: outputTool
     });
+  }
+
+  if (modelConfidence !== null && modelConfidence < 0.65) {
+    return buildResult({ resultDomain: 'unknown', resultIntent: 'unknown', defaultConfidence: 0 });
   }
 
   if (domain === 'unknown' || intent === 'unknown') {
@@ -228,11 +246,9 @@ export const validateLlmSemanticParse = (payload) => {
   }
 
   if (domain === 'transactions' && intent === 'recent_transactions') {
-    const rawSemanticQuery = buildSemanticQueryFromTool({
-      toolName,
-      toolArgs,
-      semanticQuery: payload.semanticQuery
-    });
+    const rawSemanticQuery = hasSemanticQueryInput
+      ? payload.semanticQuery
+      : buildLegacySemanticQueryFromTool({ toolName, toolArgs });
     const semanticQuery = validateSemanticQuery(rawSemanticQuery);
     if (!semanticQuery) return null;
     return buildResult({

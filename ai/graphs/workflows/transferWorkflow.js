@@ -1,5 +1,9 @@
 import { runTransferGraph } from '../../transferGraph.js';
 import { getWindowToolAction, getWindowToolReply } from '../../shared/responseWrappers.js';
+import {
+  createExecutedWorkflowResponse,
+  createWorkflowResponse
+} from '../../contracts/assistantResponseContract.js';
 
 export const runTransferWorkflow = async ({ state, services, createChatCompletion, abortSignal }) => {
   const result = await runTransferGraph({
@@ -7,7 +11,7 @@ export const runTransferWorkflow = async ({ state, services, createChatCompletio
     userLanguage: state.session.userLanguage,
     userId: state.session.userId,
     transferState: state.transfer.nextTransferState,
-    semanticIntent: state.intent?.detectedIntent,
+    semanticIntent: state.intent?.intent || state.intent?.detectedIntent,
     transferPayload: state.intent?.transferPayload || null,
     correction: state.intent?.correction || null,
     services,
@@ -21,20 +25,36 @@ export const runTransferWorkflow = async ({ state, services, createChatCompletio
 
   if (!result.handled) {
     const formResult = await services.transactionService.openTransferForm({ userId: state.session.userId });
+    const workflowResponse = createExecutedWorkflowResponse({
+      message: getWindowToolReply('open_money_transfer_inline', state.session.userLanguage),
+      action: getWindowToolAction('open_money_transfer_inline', formResult),
+      operation: 'open_money_transfer_inline',
+      result: formResult
+    });
+
     return {
       ...state,
       workflow: { ...state.workflow, activeWorkflow, currentPhase: 'Return Response with Suggestions' },
-      execution: {
-        executed: true,
-        result: formResult
-      },
+      execution: workflowResponse.execution,
+      workflowResponse,
       ui: {
         ...state.ui,
-        message: getWindowToolReply('open_money_transfer_inline', state.session.userLanguage),
+        message: workflowResponse.message,
         action: getWindowToolAction('open_money_transfer_inline', formResult)
       }
     };
   }
+
+  const workflowResponse = createWorkflowResponse({
+    message: result.reply || '',
+    action: result.action || null,
+    nextConversationState: nextTransferState,
+    execution: {
+      executed: Boolean(result.handled),
+      operation: 'transfer_money',
+      result
+    }
+  });
 
   return {
     ...state,
@@ -49,13 +69,11 @@ export const runTransferWorkflow = async ({ state, services, createChatCompletio
       lastValidationError: nextTransferState?.lastValidationError || null,
       nextTransferState
     },
-    execution: {
-      executed: Boolean(result.handled),
-      result
-    },
+    execution: workflowResponse.execution,
+    workflowResponse,
     ui: {
       ...state.ui,
-      message: result.reply || '',
+      message: workflowResponse.message,
       action: result.action || null
     }
   };

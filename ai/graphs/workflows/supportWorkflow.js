@@ -1,10 +1,19 @@
 import { END, START, StateGraph } from '@langchain/langgraph';
 import { BankingState } from '../../state/bankingState.js';
 import { getWindowToolAction, getWindowToolReply } from '../../shared/responseWrappers.js';
+import {
+  createExecutedWorkflowResponse,
+  createWorkflowResponse
+} from '../../contracts/assistantResponseContract.js';
 
 const leverageDataNode = async (state, config) => {
   const services = config?.configurable?.services;
   const result = await services.supportService.connectRepresentative({ userId: state.session.userId });
+  const workflowResponse = createExecutedWorkflowResponse({
+    action: getWindowToolAction('open_video_call_window', result),
+    operation: 'open_video_call_window',
+    result
+  });
 
   return {
     ...state,
@@ -13,22 +22,28 @@ const leverageDataNode = async (state, config) => {
       ...state.support,
       ticketId: result?.ticketId || null
     },
-    execution: {
-      executed: true,
-      result
-    },
+    execution: workflowResponse.execution,
+    workflowResponse,
     ui: { ...state.ui, action: getWindowToolAction('open_video_call_window', result) }
   };
 };
 
-const returnResponseNode = async (state) => ({
-  ...state,
-  workflow: { ...state.workflow, currentPhase: 'Return Response with Suggestions' },
-  ui: {
-    ...state.ui,
+const returnResponseNode = async (state) => {
+  const workflowResponse = createWorkflowResponse({
+    ...state.workflowResponse,
     message: getWindowToolReply('open_video_call_window', state.session.userLanguage)
-  }
-});
+  });
+
+  return {
+    ...state,
+    workflow: { ...state.workflow, currentPhase: 'Return Response with Suggestions' },
+    workflowResponse,
+    ui: {
+      ...state.ui,
+      message: workflowResponse.message
+    }
+  };
+};
 
 const supportWorkflowGraph = new StateGraph(BankingState)
   .addNode('leverage_data', leverageDataNode)

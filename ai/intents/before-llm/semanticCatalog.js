@@ -212,7 +212,7 @@ export const RESPONSE_CONTRACT = {
     isAmbiguous: 'boolean',
     ambiguityReason: ['string', null],
     toolName: ALLOWED_TOOL_NAMES,
-    toolArgs: 'object',
+    toolArgs: 'legacy compatibility object; prefer semanticQuery/transferPayload for banking logic',
     workflowContinuation: 'boolean',
     correction: null,
     transferPayload: null,
@@ -249,7 +249,7 @@ const COMPACT_ROUTER_CONTRACT = {
     {
       domain: 'account',
       intent: 'check_balance',
-      toolName: 'get_balance',
+      toolName: null,
       chooseWhen: 'current balance, available money, account balance, יתרה, יתרת חשבון, כמה כסף יש לי',
       doNotChooseWhen: 'transaction history, transfer execution, profile details, or support'
     },
@@ -276,12 +276,13 @@ const COMPACT_ROUTER_CONTRACT = {
       intent: 'transfer_money',
       toolName: 'open_money_transfer_inline',
       chooseWhen: 'start/continue/correct/confirm/cancel a new money transfer',
-      doNotChooseWhen: 'the user only asks to inspect past transfers or count existing transfers'
+      doNotChooseWhen: 'the user only asks to inspect past transfers or count existing transfers',
+      transferPayload: 'extract explicit transfer fields; execution is handled only by the transfer workflow'
     },
     {
       domain: 'profile',
       intent: 'show_personal_details',
-      toolName: 'get_user_identity',
+      toolName: null,
       chooseWhen: 'stored user name, stored email, personal profile details',
       doNotChooseWhen: 'balance, transactions, support, or transfer execution'
     },

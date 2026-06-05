@@ -1,11 +1,7 @@
 import accountsModel from '../../models/accountsModel.js';
 
-export const createAccountService = ({ executeBankTool } = {}) => ({
+export const createAccountService = () => ({
   async getBalance({ userId }) {
-    if (executeBankTool) {
-      return executeBankTool({ name: 'get_balance', args: {}, userId });
-    }
-
     const account = await accountsModel.findAccountByUserId(userId);
     if (!account) return { found: false, message: 'Account not found' };
 

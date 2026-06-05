@@ -1,13 +1,8 @@
-export const createSupportService = ({ executeBankTool } = {}) => ({
-  async connectRepresentative({ userId }) {
-    if (executeBankTool) {
-      return executeBankTool({ name: 'open_video_call_window', args: {}, userId });
-    }
-
+export const createSupportService = () => ({
+  async connectRepresentative() {
     return {
       found: true,
-      action: 'open_video_call',
-      userId
+      action: 'open_video_call'
     };
   },
 

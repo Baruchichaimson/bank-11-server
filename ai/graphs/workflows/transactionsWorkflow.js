@@ -2,22 +2,28 @@ import { END, START, StateGraph } from '@langchain/langgraph';
 import { BankingState } from '../../state/bankingState.js';
 import { formatFinancialResponse } from '../../shared/responseFormatting.js';
 import { getLlmParseFailedReply } from '../../shared/shared.js';
+import {
+  createEmptyWorkflowResponse,
+  createExecutedWorkflowResponse
+} from '../../contracts/assistantResponseContract.js';
 
 const leverageDataNode = async (state, config) => {
   const services = config?.configurable?.services;
   const semanticQuery = state.intent?.semanticQuery;
 
   if (!semanticQuery) {
+    const workflowResponse = createEmptyWorkflowResponse({
+      message: getLlmParseFailedReply(state.session.userLanguage)
+    });
+
     return {
       ...state,
       workflow: { ...state.workflow, activeWorkflow: 'unknown', currentPhase: 'Return Response with Suggestions' },
-      execution: {
-        executed: false,
-        result: null
-      },
+      execution: workflowResponse.execution,
+      workflowResponse,
       ui: {
         ...state.ui,
-        message: getLlmParseFailedReply(state.session.userLanguage),
+        message: workflowResponse.message,
         suggestions: []
       }
     };
@@ -27,6 +33,11 @@ const leverageDataNode = async (state, config) => {
     userId: state.session.userId,
     userEmail: state.session.userEmail,
     query: semanticQuery
+  });
+  const workflowResponse = createExecutedWorkflowResponse({
+    message: formatFinancialResponse(operation, result, state.session.userLanguage),
+    operation,
+    result
   });
 
   return {
@@ -38,13 +49,11 @@ const leverageDataNode = async (state, config) => {
       dateRange: semanticQuery.dateRange || null,
       transactionType: semanticQuery.action
     },
-    execution: {
-      executed: true,
-      result
-    },
+    execution: workflowResponse.execution,
+    workflowResponse,
     ui: {
       ...state.ui,
-      message: formatFinancialResponse(operation, result, state.session.userLanguage),
+      message: workflowResponse.message,
       suggestions: []
     }
   };

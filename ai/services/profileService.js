@@ -1,11 +1,7 @@
 import usersModel from '../../models/usersModel.js';
 
-export const createProfileService = ({ executeBankTool } = {}) => ({
+export const createProfileService = () => ({
   async getUserProfile({ userId }) {
-    if (executeBankTool) {
-      return executeBankTool({ name: 'get_user_identity', args: {}, userId });
-    }
-
     const user = await usersModel.findUserById(userId);
     if (!user) return { found: false, message: 'User not found' };
 
@@ -15,6 +11,10 @@ export const createProfileService = ({ executeBankTool } = {}) => ({
       lastName: user.lastName || '',
       email: user.email || ''
     };
+  },
+
+  async getIdentity({ userId }) {
+    return this.getUserProfile({ userId });
   },
 
   async getUserById(userId) {

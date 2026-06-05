@@ -9,6 +9,8 @@ import { runSupportWorkflow } from './workflows/supportWorkflow.js';
 import { runPersonalDetailsWorkflow } from './workflows/personalDetailsWorkflow.js';
 import { runUnknownWorkflow } from './workflows/unknownWorkflow.js';
 import { createReplyPayload, detectLanguage } from '../shared/shared.js';
+import { normalizeWorkflowResponse } from '../contracts/assistantResponseContract.js';
+import { createIntentResult } from '../contracts/intentResultContract.js';
 
 const isActiveTransferState = (transferState = null) => {
   const phase = transferState?.phase;
@@ -36,29 +38,29 @@ const userRequestNode = async (state) => ({
   }
 });
 
+const toGraphIntentState = (intentResult) => ({
+  ...intentResult,
+  detectedIntent: intentResult.intent
+});
+
 const findIntentNode = async (state, config) => {
   const transferPayload = state.intent?.transferPayload || null;
   if (
     isActiveTransferState(state.transfer?.nextTransferState)
     || hasMeaningfulTransferPayload(transferPayload)
   ) {
+    const intentResult = createIntentResult({
+      domain: 'transactions',
+      intent: 'transfer_money',
+      confidence: 1,
+      source: 'transfer_workflow_state',
+      workflowContinuation: { active: true },
+      transferPayload
+    });
+
     return {
       ...state,
-      intent: {
-        ...state.intent,
-        detectedIntent: 'transfer_money',
-        confidence: 1,
-        domain: 'transactions',
-        source: 'transfer_workflow_state',
-        workflowContinuation: true,
-        semanticQuery: null,
-        correction: null,
-        transferPayload,
-        toolName: null,
-        toolArgs: {},
-        isAmbiguous: false,
-        ambiguityReason: null
-      },
+      intent: toGraphIntentState(intentResult),
       audit: {
         ...state.audit,
         transitions: [...(state.audit?.transitions || []), 'Intent: transfer_money']
@@ -75,20 +77,7 @@ const findIntentNode = async (state, config) => {
 
   return {
     ...state,
-    intent: {
-      detectedIntent: detection.intent,
-      confidence: detection.confidence,
-      domain: detection.domain,
-      source: detection.source,
-      workflowContinuation: detection.workflowContinuation,
-      semanticQuery: detection.semanticQuery,
-      correction: detection.correction,
-      transferPayload: detection.transferPayload,
-      toolName: detection.toolName,
-      toolArgs: detection.toolArgs,
-      isAmbiguous: detection.isAmbiguous,
-      ambiguityReason: detection.ambiguityReason
-    },
+    intent: toGraphIntentState(detection),
     audit: {
       ...state.audit,
       transitions: [...(state.audit?.transitions || []), `Intent: ${detection.intent}`]
@@ -98,7 +87,7 @@ const findIntentNode = async (state, config) => {
 
 const workflowRouterNode = async (state) => {
   const workflow = routeWorkflow({
-    intent: state.intent.detectedIntent,
+    intent: state.intent.intent || state.intent.detectedIntent,
     domain: state.intent.domain
   });
 
@@ -149,10 +138,23 @@ const runPersonalDetailsWorkflowNode = (state, config) => runPersonalDetailsWork
 
 const runUnknownWorkflowNode = (state) => runUnknownWorkflow({ state });
 
+const toClientAction = (action) => {
+  if (!action) return null;
+
+  if (action.type === 'open_video_call' && !action.payload) {
+    return 'open_video_call';
+  }
+
+  return action.payload
+    ? { type: action.type, ...action.payload }
+    : { type: action.type };
+};
+
 const returnResponseNode = async (state) => {
   return {
     ...state,
-    workflow: { ...state.workflow, currentPhase: 'Return Response' }
+    workflow: { ...state.workflow, currentPhase: 'Return Response' },
+    workflowResponse: normalizeWorkflowResponse(state.workflowResponse || state)
   };
 };
 
@@ -222,12 +224,13 @@ export const runBankingGraph = async ({
       }
     }
   );
+  const workflowResponse = normalizeWorkflowResponse(finalState.workflowResponse || finalState);
 
   return createReplyPayload({
     history: finalState.history,
     userText: finalState.userInput,
-    reply: finalState.ui?.message || '',
-    transferState: finalState.transfer?.nextTransferState || null,
-    action: finalState.ui?.action || null
+    reply: workflowResponse.message,
+    transferState: workflowResponse.nextConversationState || finalState.transfer?.nextTransferState || null,
+    action: toClientAction(workflowResponse.action)
   });
 };

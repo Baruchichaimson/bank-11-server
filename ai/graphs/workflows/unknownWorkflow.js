@@ -2,6 +2,7 @@ import {
   getLlmParseFailedReply,
   getLlmUnavailableReply
 } from '../../shared/shared.js';
+import { createEmptyWorkflowResponse } from '../../contracts/assistantResponseContract.js';
 
 const getUnknownIntentReply = (userLanguage) => (
   userLanguage === 'he'
@@ -23,17 +24,16 @@ const generateUnknownReply = ({ state }) => {
 
 export const runUnknownWorkflow = async ({ state }) => {
   const message = generateUnknownReply({ state });
+  const workflowResponse = createEmptyWorkflowResponse({ message });
 
   return {
     ...state,
     workflow: { ...state.workflow, activeWorkflow: 'unknown', currentPhase: 'Return Response with Suggestions' },
-    execution: {
-      executed: false,
-      result: null
-    },
+    execution: workflowResponse.execution,
+    workflowResponse,
     ui: {
       ...state.ui,
-      message,
+      message: workflowResponse.message,
       suggestions: []
     }
   };

@@ -5,6 +5,8 @@ import { createPersonalDetailsState } from './personalDetailsState.js';
 import { createSupportState } from './supportState.js';
 import { createTransactionsState } from './transactionsState.js';
 import { createTransferState } from './transferState.js';
+import { createEmptyWorkflowResponse } from '../contracts/assistantResponseContract.js';
+import { createUnknownIntent } from '../contracts/intentResultContract.js';
 
 export const BankingState = Annotation.Root({
   userInput: Annotation(),
@@ -22,6 +24,7 @@ export const BankingState = Annotation.Root({
   personalDetails: Annotation(),
   risk: Annotation(),
   execution: Annotation(),
+  workflowResponse: Annotation(),
   ui: Annotation(),
   audit: Annotation()
 });
@@ -46,10 +49,8 @@ export const createInitialBankingState = ({
   },
   isolation: createIsolatedTurnState({ userInput, userId, userLanguage }),
   intent: {
+    ...createUnknownIntent(),
     detectedIntent: 'unknown',
-    confidence: 0,
-    isAmbiguous: false,
-    ambiguityReason: null,
     transferPayload
   },
   workflow: {
@@ -69,8 +70,10 @@ export const createInitialBankingState = ({
   },
   execution: {
     executed: false,
+    operation: null,
     result: null
   },
+  workflowResponse: createEmptyWorkflowResponse(),
   ui: {
     message: '',
     form: null,

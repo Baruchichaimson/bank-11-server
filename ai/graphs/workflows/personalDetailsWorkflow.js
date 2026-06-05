@@ -1,10 +1,18 @@
 import { END, START, StateGraph } from '@langchain/langgraph';
 import { BankingState } from '../../state/bankingState.js';
 import { formatFinancialResponse } from '../../shared/responseFormatting.js';
+import {
+  createExecutedWorkflowResponse,
+  createWorkflowResponse
+} from '../../contracts/assistantResponseContract.js';
 
 const leverageDataNode = async (state, config) => {
   const services = config?.configurable?.services;
   const result = await services.profileService.getUserProfile({ userId: state.session.userId });
+  const workflowResponse = createExecutedWorkflowResponse({
+    operation: 'get_user_identity',
+    result
+  });
 
   return {
     ...state,
@@ -13,22 +21,28 @@ const leverageDataNode = async (state, config) => {
       ...state.personalDetails,
       userProfile: result
     },
-    execution: {
-      executed: true,
-      result
-    },
+    execution: workflowResponse.execution,
+    workflowResponse,
     ui: { ...state.ui, message: '' }
   };
 };
 
-const returnResponseNode = async (state) => ({
-  ...state,
-  workflow: { ...state.workflow, currentPhase: 'Return Response with Suggestions' },
-  ui: {
-    ...state.ui,
+const returnResponseNode = async (state) => {
+  const workflowResponse = createWorkflowResponse({
+    ...state.workflowResponse,
     message: formatFinancialResponse('get_user_identity', state.execution.result, state.session.userLanguage)
-  }
-});
+  });
+
+  return {
+    ...state,
+    workflow: { ...state.workflow, currentPhase: 'Return Response with Suggestions' },
+    workflowResponse,
+    ui: {
+      ...state.ui,
+      message: workflowResponse.message
+    }
+  };
+};
 
 const personalDetailsWorkflowGraph = new StateGraph(BankingState)
   .addNode('leverage_data', leverageDataNode)

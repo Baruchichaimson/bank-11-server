@@ -1,8 +1,21 @@
-import test from 'node:test';
+import test, { afterEach, mock } from 'node:test';
 import assert from 'node:assert/strict';
 import { detectIntent } from '../ai/intents/before-llm/detectIntent.js';
 import { buildSemanticParserPrompt, validateLlmSemanticParse } from '../ai/intents/llmSemanticParser.js';
 import { SEMANTIC_CATALOG } from '../ai/intents/before-llm/semanticCatalog.js';
+
+const FIXED_PROMPT_DATE = '2026-06-04';
+
+const freezePromptDate = () => {
+  mock.timers.enable({
+    apis: ['Date'],
+    now: new Date(`${FIXED_PROMPT_DATE}T12:00:00.000Z`)
+  });
+};
+
+afterEach(() => {
+  mock.timers.reset();
+});
 
 const createLlmMock = (payload) => async () => ({
   choices: [{
@@ -19,6 +32,8 @@ const createLlmMock = (payload) => async () => ({
 });
 
 test('detectIntent uses LLM as primary semantic parser', async () => {
+  freezePromptDate();
+
   let receivedMessages = [];
   let receivedTemperature = null;
   let receivedTopP = null;
@@ -66,7 +81,7 @@ test('detectIntent uses LLM as primary semantic parser', async () => {
   assert.deepEqual(receivedResponseFormat, { type: 'json_object' });
   const parserInput = JSON.parse(receivedMessages[1].content);
   assert.equal(parserInput.currentUserMessage, 'תראה לי עשרים וחמש העברות אחרונות החודש');
-  assert.match(parserInput.currentDate, /^\d{4}-\d{2}-\d{2}$/);
+  assert.equal(parserInput.currentDate, FIXED_PROMPT_DATE);
   assert.equal(parserInput.recentConversation.length, 2);
   assert.equal(parserInput.recentConversation[0].content, 'תראה לי שתי העברות אחרונות');
   assert.equal(result.source, 'llm_semantic_parser');
@@ -162,7 +177,7 @@ test('validateLlmSemanticParse maps legacy tool names to canonical domains and i
 
   assert.equal(result.domain, 'account');
   assert.equal(result.intent, 'check_balance');
-  assert.equal(result.toolName, 'get_balance');
+  assert.deepEqual(result.tool, { name: 'get_balance', args: {} });
 });
 
 test('validateLlmSemanticParse builds counterparty query from tool args', () => {
@@ -175,7 +190,10 @@ test('validateLlmSemanticParse builds counterparty query from tool args', () => 
 
   assert.equal(result.domain, 'transactions');
   assert.equal(result.intent, 'recent_transactions');
-  assert.equal(result.toolName, 'get_last_sent_transfer_to_recipient');
+  assert.deepEqual(result.tool, {
+    name: 'get_last_sent_transfer_to_recipient',
+    args: { recipientName: 'dani' }
+  });
   assert.deepEqual(result.semanticQuery, {
     domain: 'transactions',
     intent: 'transactions_query',
@@ -185,6 +203,36 @@ test('validateLlmSemanticParse builds counterparty query from tool args', () => 
     aggregation: 'counterparty',
     limit: 10,
     recipientName: 'dani'
+  });
+});
+
+test('validateLlmSemanticParse prefers semanticQuery over legacy transaction tool names', () => {
+  const result = validateLlmSemanticParse({
+    domain: 'transactions',
+    intent: 'recent_transactions',
+    toolName: 'count_transfers',
+    semanticQuery: {
+      domain: 'transactions',
+      intent: 'transactions_query',
+      action: 'transfer_money',
+      filters: { type: 'transfer' },
+      timeRange: null,
+      aggregation: 'list',
+      limit: 5
+    }
+  });
+
+  assert.equal(result.domain, 'transactions');
+  assert.equal(result.intent, 'recent_transactions');
+  assert.equal(result.tool, null);
+  assert.deepEqual(result.semanticQuery, {
+    domain: 'transactions',
+    intent: 'transactions_query',
+    action: 'transfer_money',
+    filters: { type: 'transfer' },
+    timeRange: null,
+    aggregation: 'list',
+    limit: 5
   });
 });
 
@@ -216,8 +264,8 @@ test('detectIntent routes ambiguous or low-confidence classifications to unknown
 
   assert.equal(ambiguous.domain, 'unknown');
   assert.equal(ambiguous.intent, 'unknown');
-  assert.equal(ambiguous.isAmbiguous, true);
-  assert.match(ambiguous.ambiguityReason, /history/);
+  assert.equal(ambiguous.ambiguity?.isAmbiguous, true);
+  assert.match(ambiguous.ambiguity?.reason, /history/);
 
   const lowConfidence = await detectIntent({
     userInput: 'העברה אולי',
@@ -259,7 +307,7 @@ test('detectIntent resolves transaction month follow-up through LLM conversation
   });
 
   assert.equal(result.source, 'llm_semantic_parser');
-  assert.equal(result.workflowContinuation, true);
+  assert.deepEqual(result.workflowContinuation, { active: true });
   assert.equal(result.domain, 'transactions');
   assert.equal(result.intent, 'recent_transactions');
   assert.deepEqual(result.semanticQuery, {
@@ -313,7 +361,7 @@ test('detectIntent does not fall back to deterministic parsing when LLM is unava
   assert.equal(result.source, 'llm_unavailable');
   assert.equal(result.domain, 'unknown');
   assert.equal(result.intent, 'unknown');
-  assert.equal(result.toolName, null);
+  assert.equal(result.tool, null);
 });
 
 test('detectIntent logs invalid LLM parser responses', async (t) => {
@@ -354,6 +402,29 @@ test('detectIntent routes transfer start to transfer_money from LLM output', asy
   assert.equal(result.intent, 'transfer_money');
 });
 
+test('validateLlmSemanticParse accepts transfer domain as transfer workflow compatibility', () => {
+  const result = validateLlmSemanticParse({
+    domain: 'transfer',
+    intent: 'transfer_money',
+    transferPayload: {
+      receiverEmail: 'receiver@example.com',
+      amount: 100,
+      description: 'rent'
+    }
+  });
+
+  assert.equal(result.domain, 'transactions');
+  assert.equal(result.intent, 'transfer_money');
+  assert.deepEqual(result.transferPayload, {
+    receiverEmail: 'receiver@example.com',
+    amount: 100,
+    description: 'rent',
+    confirmation: null,
+    skipDescription: false,
+    startNewTransfer: false
+  });
+});
+
 test('detectIntent routes Hebrew profile name query from LLM output', async () => {
   const result = await detectIntent({
     userInput: 'מה השם שלי',
@@ -367,7 +438,7 @@ test('detectIntent routes Hebrew profile name query from LLM output', async () =
   assert.equal(result.source, 'llm_semantic_parser');
   assert.equal(result.domain, 'profile');
   assert.equal(result.intent, 'show_personal_details');
-  assert.equal(result.toolName, 'get_user_identity');
+  assert.deepEqual(result.tool, { name: 'get_user_identity', args: {} });
 });
 
 test('detectIntent does not override LLM output with local keyword guardrails', async () => {
@@ -387,7 +458,7 @@ test('detectIntent does not override LLM output with local keyword guardrails', 
   assert.equal(result.source, 'llm_semantic_parser');
   assert.equal(result.domain, 'profile');
   assert.equal(result.intent, 'show_personal_details');
-  assert.equal(result.toolName, 'get_user_identity');
+  assert.deepEqual(result.tool, { name: 'get_user_identity', args: {} });
 });
 
 test('detectIntent accepts function-style LLM tool name output', async () => {
@@ -404,10 +475,12 @@ test('detectIntent accepts function-style LLM tool name output', async () => {
 
   assert.equal(result.domain, 'account');
   assert.equal(result.intent, 'check_balance');
-  assert.equal(result.toolName, 'get_balance');
+  assert.deepEqual(result.tool, { name: 'get_balance', args: {} });
 });
 
 test('detectIntent preserves transaction limit and model-provided dateRange from LLM', async () => {
+  freezePromptDate();
+
   const createChatCompletion = async () => ({
     choices: [{
       message: {
@@ -446,7 +519,8 @@ test('detectIntent preserves transaction limit and model-provided dateRange from
     timeRange: null,
     aggregation: 'first_n',
     limit: 3,
-    dateRange: { from: '2026-05-01', to: '2026-05-31' }
+    dateRange: { from: '2026-05-01', to: '2026-05-31' },
+    sortDirection: 'desc'
   });
 });
 
@@ -526,6 +600,8 @@ test('detectIntent keeps generic transaction type null', async () => {
 });
 
 test('detectIntent parses transfer count for this month without a limit', async () => {
+  freezePromptDate();
+
   const result = await detectIntent({
     userInput: 'כמה העברות עשיתי החודש?',
     createChatCompletion: createLlmMock({
@@ -557,7 +633,7 @@ test('detectIntent parses transfer count for this month without a limit', async 
 test('buildSemanticParserPrompt stays workflow-state isolated', () => {
   const prompt = buildSemanticParserPrompt();
 
-  assert.match(prompt, /workflowContinuation true/);
+  assert.match(prompt, /"workflowContinuation":"boolean"/);
   assert.doesNotMatch(prompt, /active transfer workflow/);
   assert.doesNotMatch(prompt, /pendingFormData|lastValidationError|transferPhase/);
 });

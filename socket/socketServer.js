@@ -142,6 +142,7 @@ export const initSocketServer = (httpServer) => {
     userSockets.set(normalizedEmail, userSet);
 
     socket.on(CHAT_EVENT, async (payload) => {
+      console.log('SERVER GOT chat_message:', payload);
       const requestId = String(payload?.requestId || Date.now());
       const controller = new AbortController();
       activeAssistantRequests.set(requestId, controller);

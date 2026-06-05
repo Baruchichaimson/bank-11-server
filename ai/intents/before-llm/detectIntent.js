@@ -1,31 +1,14 @@
 import { parseQueryWithLlm, validateSemanticQuery } from '../llmSemanticParser.js';
 import { normalizeTransactionSemanticQuery } from '../after-llm/transactionQueryNormalizer.js';
 import { getCurrentDateForPrompt } from './llmPromptPayloadBuilder.js';
+import {
+  createIntentResult,
+  createUnknownIntent,
+  normalizeIntentResult
+} from '../../contracts/intentResultContract.js';
 
-const UNKNOWN_PARSE = {
-  source: 'safe_unknown',
-  domain: 'unknown',
-  intent: 'unknown',
-  confidence: 0,
-  semanticQuery: null,
-  workflowContinuation: false,
-  correction: null,
-  transferPayload: null,
-  toolName: null,
-  toolArgs: {},
-  isAmbiguous: false,
-  ambiguityReason: null
-};
-
-const LLM_UNAVAILABLE_PARSE = {
-  ...UNKNOWN_PARSE,
-  source: 'llm_unavailable'
-};
-
-const LLM_PARSE_FAILED_PARSE = {
-  ...UNKNOWN_PARSE,
-  source: 'llm_parse_failed'
-};
+const LLM_UNAVAILABLE_PARSE = createUnknownIntent({ source: 'llm_unavailable' });
+const LLM_PARSE_FAILED_PARSE = createUnknownIntent({ source: 'llm_parse_failed' });
 
 const normalizeUserText = (value) => String(value || '')
   .trim()
@@ -134,15 +117,14 @@ const normalizeFinalSemanticQuery = ({ userInput, finalParse }) => {
 const normalizeFinalParse = ({ userInput, finalParse }) => {
   if (!isTransactionCountQuestion(userInput)) return finalParse;
 
-  return {
+  return createIntentResult({
     ...finalParse,
     domain: 'transactions',
     intent: 'recent_transactions',
     confidence: finalParse.confidence || 0.95,
-    toolName: 'count_transfers',
-    isAmbiguous: false,
-    ambiguityReason: null
-  };
+    tool: null,
+    ambiguity: null
+  });
 };
 
 export const detectIntent = async ({
@@ -151,30 +133,23 @@ export const detectIntent = async ({
   createChatCompletion,
   abortSignal
 }) => {
-  const llmParsed = await parseQueryWithLlm({
+  const parsed = await parseQueryWithLlm({
     userInput,
     history,
     createChatCompletion,
     abortSignal
   });
+  const llmParsed = parsed ? normalizeIntentResult(parsed) : null;
   const rawFinalParse =
     llmParsed ||
     (createChatCompletion ? LLM_PARSE_FAILED_PARSE : LLM_UNAVAILABLE_PARSE);
-  const finalParse = normalizeFinalParse({ userInput, finalParse: rawFinalParse });
+  const finalParse = normalizeFinalParse({ userInput, finalParse: normalizeIntentResult(rawFinalParse) });
   const semanticQuery = normalizeFinalSemanticQuery({ userInput, finalParse });
 
-  return {
-    intent: finalParse.intent,
-    confidence: finalParse.confidence,
-    domain: finalParse.domain,
+  return createIntentResult({
+    ...finalParse,
     semanticQuery,
-    source: finalParse.source,
-    workflowContinuation: Boolean(finalParse.workflowContinuation),
-    correction: finalParse.correction || null,
-    transferPayload: finalParse.transferPayload || null,
-    toolName: finalParse.toolName || null,
-    toolArgs: finalParse.toolArgs || {},
-    isAmbiguous: Boolean(finalParse.isAmbiguous),
-    ambiguityReason: finalParse.ambiguityReason || null
-  };
+    tool: finalParse.tool,
+    ambiguity: finalParse.ambiguity
+  });
 };

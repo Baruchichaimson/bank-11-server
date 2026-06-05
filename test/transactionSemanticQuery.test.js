@@ -27,9 +27,9 @@ test('semantic parser prompt explains Hebrew previous-month transfer history lim
   assert.match(prompt, /חודש קודם/);
   assert.match(prompt, /full previous calendar month/i);
   assert.match(prompt, /שתיים=2/);
-  assert.match(prompt, /ארבע=4/);
-  assert.match(prompt, /sortDirection to desc/);
-  assert.match(prompt, /sortDirection to asc/);
+  assert.match(prompt, /ארבע\/ארבעה=4/);
+  assert.match(prompt, /sortDirection="desc"/);
+  assert.match(prompt, /sortDirection="asc"/);
 });
 
 test('validateLlmSemanticParse preserves latest previous-month transfer query semantics', () => {

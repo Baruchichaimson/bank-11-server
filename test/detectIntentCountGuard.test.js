@@ -38,7 +38,7 @@ test('detectIntent forces how-many transfer questions to count even when LLM ret
 
   assert.equal(result.domain, 'transactions');
   assert.equal(result.intent, 'recent_transactions');
-  assert.equal(result.toolName, 'count_transfers');
+  assert.equal(result.tool, null);
   assert.equal(result.semanticQuery.aggregation, 'count');
   assert.equal(result.semanticQuery.limit, null);
   assert.equal(result.semanticQuery.action, 'transfer_money');
