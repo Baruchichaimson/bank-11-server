@@ -1,12 +1,8 @@
-import { Transaction } from '../../entities/transactions.js';
-import {
-  findTransactionsByUserId,
-  transferMoney
-} from '../../models/transactionsModel.js';
+import { transferMoney } from '../../models/transactionsModel.js';
 import { TransactionRepository } from '../repositories/transactionRepository.js';
 import { QueryExecutor } from '../execution/queryExecutor.js';
 
-export const createTransactionService = ({ executeBankTool, accountService, profileService } = {}) => {
+export const createTransactionService = ({ accountService, profileService } = {}) => {
   const transactionRepository = new TransactionRepository();
   const queryExecutor = new QueryExecutor({
     transactionRepository,
@@ -19,43 +15,87 @@ export const createTransactionService = ({ executeBankTool, accountService, prof
       return queryExecutor.execute({ userId, userEmail, query });
     },
 
-    async getTransactions({ userId, args = {} }) {
-      if (!executeBankTool) {
-        const limit = Number.isInteger(args.limit) ? args.limit : 5;
-        const items = await findTransactionsByUserId(userId, { limit });
-        return { found: true, count: items.length, items };
-      }
-      return executeBankTool({ name: 'get_recent_transfers', args, userId });
+    async getTransactions({ userId, userEmail = null, args = {} }) {
+      const limit = Number.isInteger(args.limit) ? args.limit : 5;
+      const { result } = await queryExecutor.execute({
+        userId,
+        userEmail,
+        query: {
+          domain: 'transactions',
+          intent: 'transactions_query',
+          action: 'transfer_money',
+          filters: { type: 'transfer' },
+          dateRange: args.from || args.to ? { from: args.from || null, to: args.to || null } : null,
+          timeRange: null,
+          aggregation: 'list',
+          limit
+        }
+      });
+      return result;
     },
 
-    async getLastTransfer({ userId }) {
-      if (!executeBankTool) {
-        const items = await findTransactionsByUserId(userId, { limit: 1 });
-        return items[0] ? { found: true, ...items[0] } : { found: false, message: 'No transactions found' };
-      }
-      return executeBankTool({ name: 'get_last_transfer', args: {}, userId });
+    async getLastTransfer({ userId, userEmail = null }) {
+      const { result } = await queryExecutor.execute({
+        userId,
+        userEmail,
+        query: {
+          domain: 'transactions',
+          intent: 'transactions_query',
+          action: 'transfer_money',
+          filters: { type: 'transfer' },
+          dateRange: null,
+          timeRange: null,
+          aggregation: 'first_n',
+          limit: 1
+        }
+      });
+      const tx = result?.items?.[0];
+      return tx ? { found: true, ...tx } : { found: false, message: 'No transactions found' };
     },
 
-    async countTransfers({ userId, args = {} }) {
-      if (!executeBankTool) {
-        const items = await findTransactionsByUserId(userId);
-        return { found: true, count: items.length, from: args.from || '', to: args.to || '' };
-      }
-      return executeBankTool({ name: 'count_transfers', args, userId });
+    async countTransfers({ userId, userEmail = null, args = {} }) {
+      const { result } = await queryExecutor.execute({
+        userId,
+        userEmail,
+        query: {
+          domain: 'transactions',
+          intent: 'transactions_query',
+          action: 'transfer_money',
+          filters: { type: 'transfer' },
+          dateRange: args.from || args.to ? { from: args.from || null, to: args.to || null } : null,
+          timeRange: null,
+          aggregation: 'count',
+          limit: null
+        }
+      });
+      return result;
     },
 
-    async getTransfersWithCounterparty({ userId, args = {} }) {
-      if (!executeBankTool) {
-        return { found: false, message: 'Counterparty lookup unavailable' };
+    async getTransfersWithCounterparty({ userId, userEmail = null, args = {} }) {
+      const recipientName = String(args.recipientName || '').trim();
+      if (!recipientName) {
+        return { found: false, message: 'recipientName is required' };
       }
-      return executeBankTool({ name: 'get_last_sent_transfer_to_recipient', args, userId });
+      const { result } = await queryExecutor.execute({
+        userId,
+        userEmail,
+        query: {
+          domain: 'transactions',
+          intent: 'transactions_query',
+          action: 'transfer_money',
+          filters: { type: 'transfer' },
+          dateRange: args.from || args.to ? { from: args.from || null, to: args.to || null } : null,
+          timeRange: null,
+          aggregation: 'counterparty',
+          recipientName,
+          limit: 10
+        }
+      });
+      return result;
     },
 
     async openTransferForm({ userId }) {
-      if (!executeBankTool) {
-        return { found: true, action: { type: 'open_money_transfer_inline' }, userId };
-      }
-      return executeBankTool({ name: 'open_money_transfer_inline', args: {}, userId });
+      return { found: true, action: { type: 'open_money_transfer_inline' }, userId };
     },
 
     async executeTransfer({ fromAccountId, toAccountId, amount, description }) {
@@ -63,23 +103,15 @@ export const createTransactionService = ({ executeBankTool, accountService, prof
     },
 
     async getRecentTransactionsByEmail({ email, limit = 5 }) {
-      return Transaction.find({
-        $or: [{ fromEmail: email }, { toEmail: email }]
-      })
-        .sort({ createdAt: -1 })
-        .limit(limit)
-        .lean();
+      return transactionRepository.listRecentByEmail({ email, limit });
     },
 
     async countMonthlyOutgoingTransfers({ email, since }) {
-      return Transaction.countDocuments({
-        fromEmail: email,
-        createdAt: { $gte: since }
-      });
+      return transactionRepository.countOutgoingSince({ email, since });
     },
 
     async findTransactionsByUserId(userId, options = {}) {
-      return findTransactionsByUserId(userId, options);
+      return transactionRepository.listByUserId(userId, options);
     }
   };
 };
