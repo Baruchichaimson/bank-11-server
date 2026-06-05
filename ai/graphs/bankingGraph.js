@@ -1,5 +1,5 @@
 import { END, START, StateGraph } from '@langchain/langgraph';
-import { BankingState, createInitialBankingState } from '../state/bankingState.js';
+import { BankingState } from '../state/bankingState.js';
 import { detectIntent } from '../intents/before-llm/detectIntent.js';
 import { routeWorkflow } from '../router/workflowRouter.js';
 import { runTransferWorkflow } from './workflows/transferWorkflow.js';
