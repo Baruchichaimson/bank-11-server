@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { normalizeTransactionSemanticQuery, resolveDateRangeFromText } from '../ai/intents/transactionQueryNormalizer.js';
+import { normalizeTransactionSemanticQuery, resolveDateRangeFromText } from '../ai/intents/after-llm/transactionQueryNormalizer.js';
 
 test('resolveDateRangeFromText handles relative Hebrew month ranges', () => {
   const currentDate = '2026-06-04';
