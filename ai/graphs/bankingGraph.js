@@ -113,4 +113,4 @@ export const createBankingGraph = () => {
   return graph.compile();
 };
 
-export const bankingGraph = createBankingGraph();
+export const runBankingGraph = createBankingGraph();
