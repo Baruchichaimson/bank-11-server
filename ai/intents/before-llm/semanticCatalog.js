@@ -36,14 +36,6 @@ export const TOOL_CATALOG = [
     payload: { type: 'semanticQuery' }
   },
   {
-    toolName: 'get_last_transfer',
-    domain: 'transactions',
-    intent: 'recent_transactions',
-    workflow: 'transactions_workflow',
-    purpose: 'Return the newest matching transfer when the user asks for a single latest transfer.',
-    payload: { type: 'semanticQuery' }
-  },
-  {
     toolName: 'count_transfers',
     domain: 'transactions',
     intent: 'recent_transactions',
