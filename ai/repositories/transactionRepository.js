@@ -1,5 +1,6 @@
 import { Transaction } from '../../entities/transactions.js';
 import { User } from '../../entities/users.js';
+import { findTransactionsByUserId } from '../../models/transactionsModel.js';
 
 const normalizeEmail = (value) => String(value || '').trim().toLowerCase();
 
@@ -82,5 +83,25 @@ export class TransactionRepository {
     const safeLimit = Number.isInteger(limit) && limit > 0 ? Math.min(limit, 100) : 10;
     cursor.limit(safeLimit);
     return cursor.lean();
+  }
+
+  async listRecentByEmail({ email, limit = 5 }) {
+    return Transaction.find({
+      $or: [{ fromEmail: email }, { toEmail: email }]
+    })
+      .sort({ createdAt: -1 })
+      .limit(limit)
+      .lean();
+  }
+
+  async countOutgoingSince({ email, since }) {
+    return Transaction.countDocuments({
+      fromEmail: email,
+      createdAt: { $gte: since }
+    });
+  }
+
+  async listByUserId(userId, options = {}) {
+    return findTransactionsByUserId(userId, options);
   }
 }
