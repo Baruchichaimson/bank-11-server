@@ -12,6 +12,14 @@ import { createReplyPayload, detectLanguage } from '../shared/shared.js';
 import { normalizeWorkflowResponse } from '../contracts/assistantResponseContract.js';
 import { createIntentResult } from '../contracts/intentResultContract.js';
 
+const BANKING_GRAPH_DEBUG = process.env.BANKING_GRAPH_DEBUG === 'true';
+
+const debugBankingGraph = (...args) => {
+  if (BANKING_GRAPH_DEBUG) {
+    console.log(...args);
+  }
+};
+
 const isActiveTransferState = (transferState = null) => {
   const phase = transferState?.phase;
   return Boolean(phase && phase !== 'idle');
@@ -57,6 +65,13 @@ const findIntentNode = async (state, config) => {
       workflowContinuation: { active: true },
       transferPayload
     });
+    debugBankingGraph('BANKING GRAPH DETECTED INTENT', {
+      domain: intentResult.domain,
+      intent: intentResult.intent,
+      source: intentResult.source,
+      confidence: intentResult.confidence,
+      hasTransferPayload: Boolean(intentResult.transferPayload)
+    });
 
     return {
       ...state,
@@ -74,6 +89,14 @@ const findIntentNode = async (state, config) => {
     createChatCompletion: config?.configurable?.createChatCompletion,
     abortSignal: config?.configurable?.abortSignal
   });
+  debugBankingGraph('BANKING GRAPH DETECTED INTENT', {
+    domain: detection.domain,
+    intent: detection.intent,
+    source: detection.source,
+    confidence: detection.confidence,
+    hasSemanticQuery: Boolean(detection.semanticQuery),
+    hasTransferPayload: Boolean(detection.transferPayload)
+  });
 
   return {
     ...state,
@@ -89,6 +112,11 @@ const workflowRouterNode = async (state) => {
   const workflow = routeWorkflow({
     intent: state.intent.intent || state.intent.detectedIntent,
     domain: state.intent.domain
+  });
+  debugBankingGraph('BANKING GRAPH SELECTED WORKFLOW', {
+    intent: state.intent.intent || state.intent.detectedIntent,
+    domain: state.intent.domain,
+    workflow
   });
 
   return {
@@ -151,10 +179,18 @@ const toClientAction = (action) => {
 };
 
 const returnResponseNode = async (state) => {
+  const workflowResponse = normalizeWorkflowResponse(state.workflowResponse || state);
+  debugBankingGraph('BANKING GRAPH WORKFLOW RESPONSE', {
+    actionType: workflowResponse.action?.type || null,
+    hasNextConversationState: Boolean(workflowResponse.nextConversationState),
+    executed: Boolean(workflowResponse.execution?.executed),
+    operation: workflowResponse.execution?.operation || null
+  });
+
   return {
     ...state,
     workflow: { ...state.workflow, currentPhase: 'Return Response' },
-    workflowResponse: normalizeWorkflowResponse(state.workflowResponse || state)
+    workflowResponse
   };
 };
 
@@ -226,11 +262,20 @@ export const runBankingGraph = async ({
   );
   const workflowResponse = normalizeWorkflowResponse(finalState.workflowResponse || finalState);
 
-  return createReplyPayload({
+  const replyPayload = createReplyPayload({
     history: finalState.history,
     userText: finalState.userInput,
     reply: workflowResponse.message,
     transferState: workflowResponse.nextConversationState || finalState.transfer?.nextTransferState || null,
     action: toClientAction(workflowResponse.action)
   });
+  debugBankingGraph('BANKING GRAPH FINAL REPLY PAYLOAD', {
+    hasReply: Boolean(replyPayload.reply),
+    actionType: typeof replyPayload.action === 'string'
+      ? replyPayload.action
+      : replyPayload.action?.type || null,
+    hasNextTransferState: Boolean(replyPayload.nextTransferState)
+  });
+
+  return replyPayload;
 };

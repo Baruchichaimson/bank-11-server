@@ -82,6 +82,35 @@ const createTransactionCountSemanticQuery = () => ({
   limit: null
 });
 
+const HEBREW_TRANSFER_START_PATTERNS = [
+  /(?:^|\s)(?:תבצע|בצע|לבצע|תעשה|לעשות)\s+(?:לי\s+)?העברה(?:\s|$)/,
+  /(?:^|\s)(?:אני\s+)?(?:רוצה|צריך|צריכה|מעוניין|מעוניינת)\s+(?:לבצע|לעשות)\s+(?:לי\s+)?העברה(?:\s|$)/,
+  /(?:^|\s)(?:תפתח|פתח|לפתוח)\s+(?:לי\s+)?העברה(?:\s|$)/,
+  /(?:^|\s)(?:אני\s+)?(?:רוצה|צריך|צריכה|מעוניין|מעוניינת)\s+להעביר\s+כסף(?:\s|$)/,
+  /(?:^|\s)(?:תעביר|העבר)\s+(?:לי\s+)?כסף(?:\s|$)/
+];
+
+const isObviousHebrewTransferStart = (userInput) => {
+  const text = normalizeUserText(userInput);
+  if (!/[\u0590-\u05FF]/.test(text)) return false;
+  if (isTransactionCountQuestion(userInput)) return false;
+  return HEBREW_TRANSFER_START_PATTERNS.some((pattern) => pattern.test(text));
+};
+
+const createHebrewTransferStartFallback = () => createIntentResult({
+  domain: 'transactions',
+  intent: 'transfer_money',
+  confidence: 0.9,
+  source: 'deterministic_hebrew_transfer_start'
+});
+
+const applyDeterministicFallback = ({ userInput, finalParse }) => {
+  if (finalParse.intent !== 'unknown') return finalParse;
+  if (finalParse.ambiguity?.isAmbiguous) return finalParse;
+  if (!isObviousHebrewTransferStart(userInput)) return finalParse;
+  return createHebrewTransferStartFallback();
+};
+
 const normalizeFinalSemanticQuery = ({ userInput, finalParse }) => {
   const shouldForceCount = isTransactionCountQuestion(userInput);
   const shouldNormalizeTransactions = shouldForceCount
@@ -143,7 +172,11 @@ export const detectIntent = async ({
   const rawFinalParse =
     llmParsed ||
     (createChatCompletion ? LLM_PARSE_FAILED_PARSE : LLM_UNAVAILABLE_PARSE);
-  const finalParse = normalizeFinalParse({ userInput, finalParse: normalizeIntentResult(rawFinalParse) });
+  const fallbackAwareParse = applyDeterministicFallback({
+    userInput,
+    finalParse: normalizeIntentResult(rawFinalParse)
+  });
+  const finalParse = normalizeFinalParse({ userInput, finalParse: fallbackAwareParse });
   const semanticQuery = normalizeFinalSemanticQuery({ userInput, finalParse });
 
   return createIntentResult({

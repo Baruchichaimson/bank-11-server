@@ -4,17 +4,25 @@ import usersModel from '../models/usersModel.js';
 import { JWT_SECRET } from '../middleware/auth.js';
 import { generateAssistantReply } from '../ai/chatAssistant.js';
 import { getAllowedOrigins } from '../config/corsOrigins.js';
+import { SOCKET_EVENTS } from './socketEvents.js';
 
-const CHAT_EVENT = 'chat_message';
-const CANCEL_CHAT_EVENT = 'cancel_chat_message';
-const REPLY_EVENT = 'bot_reply';
-const ERROR_EVENT = 'chat_error';
+const CHAT_EVENT = SOCKET_EVENTS.CHAT_MESSAGE;
+const CANCEL_CHAT_EVENT = SOCKET_EVENTS.CANCEL_CHAT_MESSAGE;
+const REPLY_EVENT = SOCKET_EVENTS.BOT_REPLY;
+const ERROR_EVENT = SOCKET_EVENTS.CHAT_ERROR;
 const ALLOW_DEBUG_ERRORS = process.env.ASSISTANT_DEBUG_ERRORS === 'true';
+const SOCKET_DEBUG = process.env.SOCKET_DEBUG === 'true';
 const CALL_INVITE_TTL_MS = 60 * 1000;
 
 const userSockets = new Map();
 const pendingCalls = new Map();
 const AUTH_COOKIE_NAME = 'access_token';
+
+const debugSocket = (...args) => {
+  if (SOCKET_DEBUG) {
+    console.log(...args);
+  }
+};
 
 const normalizeEmail = (value) => String(value || '').trim().toLowerCase();
 const sanitizeForRoom = (value) =>
@@ -96,6 +104,8 @@ const hasMeaningfulTransferPayload = (payload = null) => Boolean(
 );
 
 export const initSocketServer = (httpServer) => {
+  debugSocket('INIT SOCKET SERVER CALLED');
+
   const io = new Server(httpServer, {
     cors: {
       origin: getAllowedOrigins(),
@@ -105,10 +115,19 @@ export const initSocketServer = (httpServer) => {
 
   io.use(async (socket, next) => {
     try {
+      const authToken = socket.handshake?.auth?.token;
+      const cookieToken = readTokenFromCookieHeader(socket.handshake?.headers?.cookie);
+      debugSocket('SOCKET AUTH START', {
+        hasAuthToken: Boolean(authToken),
+        hasCookieToken: Boolean(cookieToken),
+        origin: socket.handshake?.headers?.origin || null
+      });
+
       const token =
-        socket.handshake?.auth?.token ||
-        readTokenFromCookieHeader(socket.handshake?.headers?.cookie);
+        authToken ||
+        cookieToken;
       if (!token) {
+        debugSocket('SOCKET AUTH FAILED', { reason: 'missing_token' });
         return next(new Error('Unauthorized'));
       }
 
@@ -118,6 +137,7 @@ export const initSocketServer = (httpServer) => {
       const tokenVersionFromDb = Number(user?.tokenVersion || 0);
 
       if (!user || !user.isVerified || tokenVersionFromJwt !== tokenVersionFromDb) {
+        debugSocket('SOCKET AUTH FAILED', { reason: 'invalid_user_or_session' });
         return next(new Error('Unauthorized'));
       }
 
@@ -126,8 +146,10 @@ export const initSocketServer = (httpServer) => {
         email: user.email,
         firstName: user.firstName
       };
+      debugSocket('SOCKET AUTH SUCCESS', { userId: socket.user.id });
       next();
     } catch {
+      debugSocket('SOCKET AUTH FAILED', { reason: 'token_verification' });
       next(new Error('Unauthorized'));
     }
   });
@@ -140,9 +162,18 @@ export const initSocketServer = (httpServer) => {
     const userSet = userSockets.get(normalizedEmail) || new Set();
     userSet.add(socket.id);
     userSockets.set(normalizedEmail, userSet);
+    debugSocket('SOCKET CONNECTED', { socketId: socket.id, userId: socket.user.id });
+
+    socket.onAny((eventName) => {
+      debugSocket('SERVER GOT ANY EVENT', { eventName, socketId: socket.id });
+    });
 
     socket.on(CHAT_EVENT, async (payload) => {
-      console.log('SERVER GOT chat_message:', payload);
+      debugSocket('SERVER GOT chat_message', {
+        requestId: payload?.requestId || null,
+        hasMessage: Boolean(payload?.message),
+        hasTransferPayload: Boolean(payload?.transferPayload)
+      });
       const requestId = String(payload?.requestId || Date.now());
       const controller = new AbortController();
       activeAssistantRequests.set(requestId, controller);
@@ -200,6 +231,11 @@ export const initSocketServer = (httpServer) => {
           action: action || null,
           nextTransferState: transferState
         });
+        debugSocket('SERVER SENT bot_reply', {
+          requestId,
+          hasAction: Boolean(action),
+          hasNextTransferState: Boolean(transferState)
+        });
         activeAssistantRequests.delete(requestId);
       } catch (err) {
         const details = String(err?.message || err);
@@ -214,6 +250,7 @@ export const initSocketServer = (httpServer) => {
               ? 'Assistant is temporarily unavailable'
               : `Assistant error: ${details}`
         });
+        debugSocket('SERVER SENT chat_error', { requestId });
         console.error('Socket assistant error:', details);
         activeAssistantRequests.delete(requestId);
       }

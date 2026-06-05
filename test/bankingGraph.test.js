@@ -254,6 +254,19 @@ test('banking graph opens transfer form for Hebrew transfer start', async () => 
   assert.equal(result.nextTransferState?.phase, 'form_open');
 });
 
+test('banking graph opens transfer form for Hebrew transfer start without LLM classification', async () => {
+  const result = await runBankingGraph({
+    userInput: 'תבצע לי העברה',
+    userId: 'user-1',
+    history: [],
+    createChatCompletion: null,
+    services
+  });
+
+  assert.equal(result.action?.type, 'open_money_transfer_inline');
+  assert.equal(result.nextTransferState?.phase, 'form_open');
+});
+
 test('banking graph submits an opened transfer form without a new LLM intent', async () => {
   let executedTransfer = null;
   let parserCalls = 0;

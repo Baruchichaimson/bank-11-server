@@ -6,7 +6,11 @@ const parseCsvOrigins = (csv) =>
 
 const DEFAULT_ORIGINS = [
   'http://localhost:5173',
+  'http://127.0.0.1:5173',
+  'http://localhost:4173',
+  'http://127.0.0.1:4173',
   'http://localhost:3000',
+  'http://127.0.0.1:3000',
   'https://bank-11-client.vercel.app',
   'https://bank-11-frontend.vercel.app'
 ];

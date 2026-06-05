@@ -341,18 +341,43 @@ test('detectIntent does not treat contextless month text as a banking follow-up'
   assert.equal(result.semanticQuery, null);
 });
 
-test('detectIntent returns llm_unavailable when LLM parser is unavailable', async () => {
-  const result = await detectIntent({
-    userInput: 'אני רוצה לבצע העברה',
-    createChatCompletion: null
-  });
+test('detectIntent uses deterministic fallback for obvious Hebrew transfer starts when LLM is unavailable', async () => {
+  const phrases = [
+    'תבצע לי העברה',
+    'אני רוצה לבצע העברה',
+    'תפתח העברה',
+    'אני רוצה להעביר כסף'
+  ];
 
-  assert.equal(result.source, 'llm_unavailable');
-  assert.equal(result.domain, 'unknown');
-  assert.equal(result.intent, 'unknown');
+  for (const phrase of phrases) {
+    const result = await detectIntent({
+      userInput: phrase,
+      createChatCompletion: null
+    });
+
+    assert.equal(result.source, 'deterministic_hebrew_transfer_start', phrase);
+    assert.equal(result.domain, 'transactions', phrase);
+    assert.equal(result.intent, 'transfer_money', phrase);
+    assert.equal(result.semanticQuery, null, phrase);
+    assert.equal(result.tool, null, phrase);
+  }
 });
 
-test('detectIntent does not fall back to deterministic parsing when LLM is unavailable', async () => {
+test('detectIntent uses deterministic fallback for obvious Hebrew transfer starts when LLM returns unknown', async () => {
+  const result = await detectIntent({
+    userInput: 'תבצע לי העברה',
+    createChatCompletion: createLlmMock({
+      domain: 'unknown',
+      intent: 'unknown'
+    })
+  });
+
+  assert.equal(result.source, 'deterministic_hebrew_transfer_start');
+  assert.equal(result.domain, 'transactions');
+  assert.equal(result.intent, 'transfer_money');
+});
+
+test('detectIntent does not use transfer fallback for unrelated Hebrew when LLM is unavailable', async () => {
   const result = await detectIntent({
     userInput: 'מה הייתרה שלי?',
     createChatCompletion: null
