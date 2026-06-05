@@ -380,9 +380,13 @@ test('detectIntent uses deterministic fallback for obvious Hebrew transfer start
 test('detectIntent uses deterministic fallback for obvious Hebrew balance requests', async () => {
   const phrases = [
     'מה היתרה שלי',
+    'מה היתרה שלי בחשבון',
+    'מה היתרה בחשבון שלי',
     'כמה כסף יש לי',
+    'כמה כסף יש לי בחשבון',
     'מה היתרה בחשבון',
-    'תראה לי יתרה'
+    'תראה לי יתרה',
+    'תציג לי יתרה'
   ];
 
   for (const phrase of phrases) {

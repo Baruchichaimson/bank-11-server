@@ -240,7 +240,13 @@ test('banking graph routes Hebrew balance fallback requests to balance workflow'
     }
   };
 
-  for (const userInput of ['מה היתרה שלי', 'כמה כסף יש לי', 'מה היתרה בחשבון']) {
+  for (const userInput of [
+    'מה היתרה שלי',
+    'מה היתרה שלי בחשבון',
+    'כמה כסף יש לי',
+    'כמה כסף יש לי בחשבון',
+    'מה היתרה בחשבון'
+  ]) {
     const result = await runBankingGraph({
       userInput,
       userId: 'user-1',
@@ -253,7 +259,7 @@ test('banking graph routes Hebrew balance fallback requests to balance workflow'
     assert.equal(result.action, null);
   }
 
-  assert.deepEqual(calls, ['user-1', 'user-1', 'user-1']);
+  assert.deepEqual(calls, ['user-1', 'user-1', 'user-1', 'user-1', 'user-1']);
 });
 
 test('banking graph routes Hebrew profile fallback requests to personal details workflow', async () => {
