@@ -3,6 +3,7 @@ import {
   TYPE_TO_ACTION,
   ALLOWED_ACTIONS as ALLOWED_ACTION_VALUES,
   ALLOWED_AGGREGATIONS as ALLOWED_AGGREGATION_VALUES,
+  ALLOWED_DIRECTIONS as ALLOWED_DIRECTION_VALUES,
   ALLOWED_TIME_RANGES as ALLOWED_TIME_RANGE_VALUES,
   ALLOWED_TYPES as ALLOWED_TYPE_VALUES
 } from '../before-llm/semanticCatalog.js';
@@ -13,6 +14,7 @@ import {
 
 const ALLOWED_ACTIONS = new Set(ALLOWED_ACTION_VALUES);
 const ALLOWED_TYPES = new Set(ALLOWED_TYPE_VALUES);
+const ALLOWED_DIRECTIONS = new Set(ALLOWED_DIRECTION_VALUES);
 const ALLOWED_TIME_RANGES = new Set(ALLOWED_TIME_RANGE_VALUES);
 const ALLOWED_AGGREGATIONS = new Set(ALLOWED_AGGREGATION_VALUES);
 const ALLOWED_SORT_DIRECTIONS = new Set(['asc', 'desc']);
@@ -91,6 +93,8 @@ export const validateSemanticQuery = (semanticQuery) => {
     action: semanticQuery.action,
     type: semanticQuery.filters?.type
   });
+  const normalizedDirection = normalizeNullableValue(semanticQuery.filters?.direction);
+  const direction = ALLOWED_DIRECTIONS.has(normalizedDirection) ? normalizedDirection : null;
   const normalizedTimeRange = normalizeNullableValue(semanticQuery.timeRange);
   const timeRange = ALLOWED_TIME_RANGES.has(normalizedTimeRange) ? normalizedTimeRange : null;
   const dateRange = validateDateRange(semanticQuery.dateRange);
@@ -101,11 +105,14 @@ export const validateSemanticQuery = (semanticQuery) => {
 
   if (aggregation === 'counterparty' && !recipientName) return null;
 
+  const filters = { type };
+  if (direction) filters.direction = direction;
+
   const result = {
     domain: 'transactions',
     intent: 'transactions_query',
     action,
-    filters: { type },
+    filters,
     timeRange: dateRange ? null : timeRange,
     aggregation,
     limit: aggregation === 'count' ? null : clampLimit(semanticQuery.limit)

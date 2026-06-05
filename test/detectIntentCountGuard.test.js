@@ -42,5 +42,5 @@ test('detectIntent forces how-many transfer questions to count even when LLM ret
   assert.equal(result.semanticQuery.aggregation, 'count');
   assert.equal(result.semanticQuery.limit, null);
   assert.equal(result.semanticQuery.action, 'transfer_money');
-  assert.deepEqual(result.semanticQuery.filters, { type: 'transfer' });
+  assert.deepEqual(result.semanticQuery.filters, { type: 'transfer', direction: 'outgoing' });
 });

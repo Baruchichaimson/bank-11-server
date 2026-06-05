@@ -66,6 +66,7 @@ const HEBREW_TENS = new Map([
 
 const MAX_LIMIT = 100;
 const TRANSACTION_NOUN_PATTERN = '(?:ה?העברות?|ה?העברה|ה?פעולות?|ה?פעולה|ה?טרנזקציות?|ה?טרנזקציה|transfers?|transactions?|activities|activity)';
+const SINGULAR_TRANSACTION_NOUN_PATTERN = '(?:ה?העברה|ה?פעולה|ה?טרנזקציה|transfer|transaction|activity)';
 const ORDER_WORD_PATTERN = '(?:אחרונות|אחרונים|אחרונה|אחרון|ראשונות|ראשונים|ראשונה|ראשון|latest|newest|first|earliest|oldest|most\\s+recent)';
 const EXPLICIT_DATE_PATTERN = /(\d{4}-\d{1,2}-\d{1,2}|\d{1,2}[./-]\d{1,2}(?:[./-]\d{2,4})?)/g;
 
@@ -145,6 +146,11 @@ const weekRange = (currentDate, offsetWeeks = 0, throughCurrentDate = false) => 
     to: formatDateParts(end)
   };
 };
+
+const lastDaysRange = (currentDate, days) => ({
+  from: formatDateParts(addDays(currentDate, -(days - 1))),
+  to: formatDateParts(currentDate)
+});
 
 const normalizeText = (value) => String(value || '')
   .trim()
@@ -279,6 +285,53 @@ const detectSortDirection = (text) => {
   return null;
 };
 
+const detectSingleRowSortDirection = (text) => {
+  if (new RegExp(`${SINGULAR_TRANSACTION_NOUN_PATTERN}\\s+(?:ה)?(?:ראשונה|ראשון|first|earliest|oldest)(?:\\s|$)`, 'i').test(text)) {
+    return 'asc';
+  }
+
+  if (new RegExp(`(?:ראשונה|ראשון|first|earliest|oldest)\\s+${SINGULAR_TRANSACTION_NOUN_PATTERN}(?:\\s|$)`, 'i').test(text)) {
+    return 'asc';
+  }
+
+  if (new RegExp(`${SINGULAR_TRANSACTION_NOUN_PATTERN}\\s+(?:ה)?(?:אחרונה|אחרון|latest|newest|most\\s+recent)(?:\\s|$)`, 'i').test(text)) {
+    return 'desc';
+  }
+
+  if (new RegExp(`(?:אחרונה|אחרון|latest|newest|most\\s+recent)\\s+${SINGULAR_TRANSACTION_NOUN_PATTERN}(?:\\s|$)`, 'i').test(text)) {
+    return 'desc';
+  }
+
+  return null;
+};
+
+const detectTransferDirection = (text) => {
+  if (includesAny(text, [
+    /(?:^|\s)(?:שקיבלתי|קיבלתי|שקיבלנו|קיבלנו|שהתקבלו|שנכנסו|נכנסות|נכנסת)(?:\s|$)/,
+    /\bincoming\b/i,
+    /\breceived\b/i
+  ])) {
+    return 'incoming';
+  }
+
+  if (includesAny(text, [
+    /(?:^|\s)(?:שביצעתי|ביצעתי|ששלחתי|שלחתי|שהעברתי|העברתי)(?:\s|$)/,
+    /\boutgoing\b/i,
+    /\bsent\b/i
+  ])) {
+    return 'outgoing';
+  }
+
+  if (includesAny(text, [
+    /(?:^|\s)(?:כל|כול)\s+ה?העברות(?:\s|$)/,
+    /\ball\s+transfers\b/i
+  ])) {
+    return 'all';
+  }
+
+  return null;
+};
+
 const normalizeYear = (year, currentYear) => {
   if (!Number.isInteger(year)) return currentYear;
   if (year < 100) return 2000 + year;
@@ -389,7 +442,11 @@ export const resolveDateRangeFromText = ({ userInput, currentDate }) => {
     return weekRange(current, -1, false);
   }
 
-  if (includesAny(text, [/(?:^|\s)השבוע(?:\s|$)/, /this\s+week/i, /מתחילת\s+השבוע/])) {
+  if (includesAny(text, [/(?:^|\s)מ?השבוע\s+האחרון(?:\s|$)/, /last\s+7\s+days/i, /past\s+week/i])) {
+    return lastDaysRange(current, 7);
+  }
+
+  if (includesAny(text, [/(?:^|\s)מ?השבוע(?:\s|$)/, /this\s+week/i, /מתחילת\s+השבוע/])) {
     return weekRange(current, 0, true);
   }
 
@@ -397,7 +454,7 @@ export const resolveDateRangeFromText = ({ userInput, currentDate }) => {
     return calendarYearRange(current.year - 1);
   }
 
-  if (includesAny(text, [/(?:^|\s)השנה(?:\s|$)/, /this\s+year/i, /מתחילת\s+השנה/])) {
+  if (includesAny(text, [/(?:^|\s)מ?השנה(?:\s|$)/, /this\s+year/i, /מתחילת\s+השנה/])) {
     return currentYearRange(current);
   }
 
@@ -427,8 +484,12 @@ export const resolveDateRangeFromText = ({ userInput, currentDate }) => {
     return calendarMonthRange(addMonths(current, -1));
   }
 
+  if (includesAny(text, [/(?:^|\s)מ?החודש\s+האחרון(?:\s|$)/, /last\s+30\s+days/i, /past\s+month/i])) {
+    return lastDaysRange(current, 30);
+  }
+
   if (includesAny(text, [
-    /(?:^|\s)החודש(?:\s|$)/,
+    /(?:^|\s)מ?החודש(?:\s|$)/,
     /חודש\s+נוכחי/,
     /this\s+month/i,
     /מתחילת\s+החודש/
@@ -450,6 +511,8 @@ export const normalizeTransactionSemanticQuery = ({ userInput, currentDate, sema
 
   const explicitLimit = extractExplicitLimit(text);
   const sortDirection = detectSortDirection(text);
+  const singleRowSortDirection = detectSingleRowSortDirection(text);
+  const direction = detectTransferDirection(text);
   const dateRange = resolveDateRangeFromText({ userInput, currentDate });
 
   if (isCountQuestion(text)) {
@@ -460,6 +523,10 @@ export const normalizeTransactionSemanticQuery = ({ userInput, currentDate, sema
     normalized.aggregation = 'first_n';
     normalized.limit = explicitLimit;
     normalized.sortDirection = sortDirection || normalized.sortDirection || 'desc';
+  } else if (singleRowSortDirection) {
+    normalized.aggregation = 'first_n';
+    normalized.limit = 1;
+    normalized.sortDirection = singleRowSortDirection;
   } else if (sortDirection) {
     normalized.sortDirection = sortDirection;
   }
@@ -472,6 +539,10 @@ export const normalizeTransactionSemanticQuery = ({ userInput, currentDate, sema
   if (/ה?העברות?|ה?העברה|transfers?/i.test(text)) {
     normalized.action = 'transfer_money';
     normalized.filters.type = 'transfer';
+  }
+
+  if (direction) {
+    normalized.filters.direction = direction;
   }
 
   return normalized;

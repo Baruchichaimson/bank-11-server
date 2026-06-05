@@ -57,10 +57,14 @@ Transaction history parameter extraction:
 - Always return semanticQuery for recent_transactions.
 - Use semanticQuery.domain="transactions" and semanticQuery.intent="transactions_query".
 - Transfer history means action="transfer_money" and filters.type="transfer".
+- For transfers the user sent/performed ("שביצעתי", "ששלחתי", "שלחתי"), set filters.direction="outgoing".
+- For transfers the user received ("שקיבלתי", "קיבלתי", "נכנסות"), set filters.direction="incoming".
+- For all transfers ("כל ההעברות"), omit filters.direction or set filters.direction="all".
 - Generic activity/transactions without a specific type means action=null and filters.type=null.
 - Questions asking how many/count => aggregation="count", limit=null.
 - Questions asking for a specific number of rows => aggregation="first_n", limit=<number>.
 - Questions asking to show/list without a specific number => aggregation="list".
+- Singular latest/earliest requests like "מה ההעברה האחרונה שביצעתי?" or "latest transfer" => aggregation="first_n", limit=1.
 - Preserve explicit numeric limits. Convert Hebrew and English number words: שני/שתי/שתיים=2, שלוש/שלושה=3, ארבע/ארבעה=4, חמש/חמישה=5, עשר=10, עשרים=20, עשרים וחמש=25.
 - אחרונות/האחרונות/אחרונים/latest/newest/most recent => sortDirection="desc".
 - ראשונות/הראשונות/ראשונים/first/earliest/oldest => sortDirection="asc".
@@ -72,7 +76,18 @@ Date extraction:
 - חודש שעבר / חודש קודם / החודש שעבר / החודש הקודם / last month / previous month => full previous calendar month.
 - If currentDate is 2026-06-04, previous month is {"from":"2026-05-01","to":"2026-05-31"}.
 - החודש / חודש נוכחי / this month => from the first day of the current month through currentDate.
+- השבוע / this week => current calendar week through currentDate.
+- השבוע האחרון / מהשבוע האחרון / past week => the last 7 days through currentDate.
+- השנה / this year => from January 1 through currentDate.
 - Keep semanticQuery.timeRange=null. Never return database filters, createdAt, or Date objects.
+
+Examples:
+- User: "מה הם 2 העברות האחרונות שביצעתי?"
+  JSON: {"domain":"transactions","intent":"recent_transactions","confidence":0.95,"semanticQuery":{"domain":"transactions","intent":"transactions_query","action":"transfer_money","filters":{"type":"transfer","direction":"outgoing"},"timeRange":null,"aggregation":"first_n","limit":2,"sortDirection":"desc"}}
+- User: "תראה לי את ההעברות שקיבלתי החודש"
+  JSON: {"domain":"transactions","intent":"recent_transactions","confidence":0.95,"semanticQuery":{"domain":"transactions","intent":"transactions_query","action":"transfer_money","filters":{"type":"transfer","direction":"incoming"},"timeRange":null,"dateRange":{"from":"YYYY-MM-01","to":"currentDate"},"aggregation":"list","limit":null,"sortDirection":"desc"}}
+- User: "תראה לי 3 העברות מהשבוע האחרון"
+  JSON: {"domain":"transactions","intent":"recent_transactions","confidence":0.95,"semanticQuery":{"domain":"transactions","intent":"transactions_query","action":"transfer_money","filters":{"type":"transfer"},"timeRange":null,"dateRange":{"from":"currentDate minus 6 days","to":"currentDate"},"aggregation":"first_n","limit":3,"sortDirection":"desc"}}
 
 Safety and confidence:
 - Extract only values explicitly present or clearly implied by the current message/context.

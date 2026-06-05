@@ -175,6 +175,55 @@ test('banking graph passes explicit transaction date range to transactions workf
   assert.equal(executedQuery?.filters?.type, 'transfer');
 });
 
+test('banking graph routes Hebrew transfer-history semantic query to transactions workflow', async () => {
+  let executedQuery = null;
+  const transactionHistoryServices = {
+    ...services,
+    transactionService: {
+      async executeStructuredQuery({ query }) {
+        executedQuery = query;
+        return {
+          operation: 'get_first_n_transfers',
+          result: { found: true, count: 0, items: [] }
+        };
+      }
+    }
+  };
+
+  const result = await runBankingGraph({
+    userInput: 'מה הם 2 העברות האחרונות שביצעתי?',
+    userId: 'user-1',
+    history: [],
+    createChatCompletion: createLlmMock({
+      domain: 'transactions',
+      intent: 'recent_transactions',
+      semanticQuery: {
+        domain: 'transactions',
+        intent: 'transactions_query',
+        action: 'transfer_money',
+        filters: { type: 'transfer' },
+        timeRange: null,
+        aggregation: 'list',
+        limit: null
+      }
+    }),
+    services: transactionHistoryServices
+  });
+
+  assert.deepEqual(executedQuery, {
+    domain: 'transactions',
+    intent: 'transactions_query',
+    action: 'transfer_money',
+    filters: { type: 'transfer', direction: 'outgoing' },
+    timeRange: null,
+    aggregation: 'first_n',
+    limit: 2,
+    sortDirection: 'desc'
+  });
+  assert.match(result.reply, /לא נמצאו העברות/);
+  assert.equal(result.action, null);
+});
+
 test('banking graph reports unavailable AI when no LLM parser is configured', async () => {
   const result = await runBankingGraph({
     userInput: 'מה קורה?',

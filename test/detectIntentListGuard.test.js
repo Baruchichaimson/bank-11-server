@@ -41,7 +41,7 @@ test('detectIntent does not keep limit 1 for list-style transfer questions witho
   assert.equal(result.semanticQuery.aggregation, 'list');
   assert.equal(result.semanticQuery.limit, null);
   assert.equal(result.semanticQuery.action, 'transfer_money');
-  assert.deepEqual(result.semanticQuery.filters, { type: 'transfer' });
+  assert.deepEqual(result.semanticQuery.filters, { type: 'transfer', direction: 'outgoing' });
 });
 
 test('detectIntent preserves explicit numeric limit for list-style transfer questions', async () => {
@@ -67,4 +67,5 @@ test('detectIntent preserves explicit numeric limit for list-style transfer ques
   assert.equal(result.semanticQuery.aggregation, 'first_n');
   assert.equal(result.semanticQuery.limit, 4);
   assert.equal(result.semanticQuery.sortDirection, 'desc');
+  assert.deepEqual(result.semanticQuery.filters, { type: 'transfer', direction: 'outgoing' });
 });

@@ -2,8 +2,9 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { buildSemanticParserPrompt, validateLlmSemanticParse } from '../ai/intents/llmSemanticParser.js';
 import { QueryExecutor } from '../ai/execution/queryExecutor.js';
+import { TransactionRepository } from '../ai/repositories/transactionRepository.js';
 
-const buildTransactionParse = ({ limit, dateRange, sortDirection }) => validateLlmSemanticParse({
+const buildTransactionParse = ({ limit, dateRange, sortDirection, direction = null }) => validateLlmSemanticParse({
   domain: 'transactions',
   intent: 'recent_transactions',
   confidence: 0.95,
@@ -11,7 +12,10 @@ const buildTransactionParse = ({ limit, dateRange, sortDirection }) => validateL
     domain: 'transactions',
     intent: 'transactions_query',
     action: 'transfer_money',
-    filters: { type: 'transfer' },
+    filters: {
+      type: 'transfer',
+      ...(direction ? { direction } : {})
+    },
     timeRange: null,
     dateRange,
     aggregation: 'first_n',
@@ -30,6 +34,12 @@ test('semantic parser prompt explains Hebrew previous-month transfer history lim
   assert.match(prompt, /ארבע\/ארבעה=4/);
   assert.match(prompt, /sortDirection="desc"/);
   assert.match(prompt, /sortDirection="asc"/);
+  assert.match(prompt, /filters\.direction="outgoing"/);
+  assert.match(prompt, /filters\.direction="incoming"/);
+  assert.match(prompt, /מה הם 2 העברות האחרונות שביצעתי/);
+  assert.match(prompt, /תראה לי את ההעברות שקיבלתי החודש/);
+  assert.match(prompt, /תראה לי 3 העברות מהשבוע האחרון/);
+  assert.match(prompt, /Singular latest\/earliest requests/);
 });
 
 test('validateLlmSemanticParse preserves latest previous-month transfer query semantics', () => {
@@ -50,6 +60,39 @@ test('validateLlmSemanticParse preserves latest previous-month transfer query se
     aggregation: 'first_n',
     limit: 2,
     dateRange: { from: '2026-05-01', to: '2026-05-31' },
+    sortDirection: 'desc'
+  });
+});
+
+test('validateLlmSemanticParse preserves incoming transfer-history direction', () => {
+  const result = validateLlmSemanticParse({
+    domain: 'transactions',
+    intent: 'recent_transactions',
+    confidence: 0.95,
+    semanticQuery: {
+      domain: 'transactions',
+      intent: 'transactions_query',
+      action: 'transfer_money',
+      filters: { type: 'transfer', direction: 'incoming' },
+      timeRange: null,
+      dateRange: { from: '2026-06-01', to: '2026-06-04' },
+      aggregation: 'list',
+      limit: null,
+      sortDirection: 'desc'
+    }
+  });
+
+  assert.equal(result.domain, 'transactions');
+  assert.equal(result.intent, 'recent_transactions');
+  assert.deepEqual(result.semanticQuery, {
+    domain: 'transactions',
+    intent: 'transactions_query',
+    action: 'transfer_money',
+    filters: { type: 'transfer', direction: 'incoming' },
+    timeRange: null,
+    aggregation: 'list',
+    limit: null,
+    dateRange: { from: '2026-06-01', to: '2026-06-04' },
     sortDirection: 'desc'
   });
 });
@@ -136,4 +179,61 @@ test('QueryExecutor sends earliest transfer-history requests as ascending create
   assert.equal(capturedArgs.limit, 4);
   assert.equal(capturedArgs.sort, 'asc');
   assert.deepEqual(capturedArgs.filters, { type: 'transfer' });
+});
+
+test('QueryExecutor passes transfer direction to repository queries', async () => {
+  let capturedArgs = null;
+  const executor = new QueryExecutor({
+    transactionRepository: {
+      async listBySemanticQuery(args) {
+        capturedArgs = args;
+        return [];
+      }
+    }
+  });
+
+  await executor.execute({
+    userId: 'user-1',
+    userEmail: 'user@example.com',
+    query: {
+      domain: 'transactions',
+      intent: 'transactions_query',
+      action: 'transfer_money',
+      filters: { type: 'transfer', direction: 'incoming' },
+      aggregation: 'list',
+      limit: null,
+      sortDirection: 'desc'
+    }
+  });
+
+  assert.deepEqual(capturedArgs.filters, { type: 'transfer', direction: 'incoming' });
+  assert.equal(capturedArgs.sort, 'desc');
+});
+
+test('TransactionRepository builds direction-aware Mongo filters for semantic transfer history', () => {
+  const repository = new TransactionRepository();
+
+  assert.deepEqual(
+    repository.buildMongoFilter({
+      email: 'user@example.com',
+      filters: { type: 'transfer', direction: 'outgoing' }
+    }),
+    { fromEmail: 'user@example.com' }
+  );
+
+  assert.deepEqual(
+    repository.buildMongoFilter({
+      email: 'user@example.com',
+      filters: { type: 'transfer', direction: 'incoming' }
+    }),
+    { toEmail: 'user@example.com' }
+  );
+
+  assert.deepEqual(
+    repository.buildMongoFilter({
+      email: 'user@example.com',
+      filters: { type: 'transfer', direction: 'all' }
+    }),
+    { $or: [{ fromEmail: 'user@example.com' }, { toEmail: 'user@example.com' }] }
+  );
 });

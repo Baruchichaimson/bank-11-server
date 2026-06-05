@@ -13,9 +13,12 @@ export class TransactionRepository {
   }
 
   buildMongoFilter({ email, filters = {}, startDate, endDate }) {
-    const query = {
-      $or: [{ fromEmail: email }, { toEmail: email }]
-    };
+    const direction = filters?.direction;
+    const query = direction === 'outgoing'
+      ? { fromEmail: email }
+      : direction === 'incoming'
+        ? { toEmail: email }
+        : { $or: [{ fromEmail: email }, { toEmail: email }] };
 
     if (filters?.type && filters.type !== 'transfer') {
       query._id = null;

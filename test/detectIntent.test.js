@@ -610,11 +610,117 @@ test('detectIntent preserves transaction limit and model-provided dateRange from
     domain: 'transactions',
     intent: 'transactions_query',
     action: 'transfer_money',
-    filters: { type: 'transfer' },
+    filters: { type: 'transfer', direction: 'outgoing' },
     timeRange: null,
     aggregation: 'first_n',
     limit: 3,
     dateRange: { from: '2026-05-01', to: '2026-05-31' },
+    sortDirection: 'desc'
+  });
+});
+
+test('detectIntent normalizes Hebrew latest outgoing transfer history from LLM semantic result', async () => {
+  freezePromptDate();
+
+  const result = await detectIntent({
+    userInput: 'מה הם 2 העברות האחרונות שביצעתי?',
+    createChatCompletion: createLlmMock({
+      domain: 'transactions',
+      intent: 'recent_transactions',
+      semanticQuery: {
+        domain: 'transactions',
+        intent: 'transactions_query',
+        action: 'transfer_money',
+        filters: { type: 'transfer' },
+        timeRange: null,
+        aggregation: 'list',
+        limit: null
+      }
+    })
+  });
+
+  assert.equal(result.source, 'llm_semantic_parser');
+  assert.equal(result.domain, 'transactions');
+  assert.equal(result.intent, 'recent_transactions');
+  assert.deepEqual(result.semanticQuery, {
+    domain: 'transactions',
+    intent: 'transactions_query',
+    action: 'transfer_money',
+    filters: { type: 'transfer', direction: 'outgoing' },
+    timeRange: null,
+    aggregation: 'first_n',
+    limit: 2,
+    sortDirection: 'desc'
+  });
+});
+
+test('detectIntent normalizes Hebrew incoming current-month transfer history from LLM semantic result', async () => {
+  freezePromptDate();
+
+  const result = await detectIntent({
+    userInput: 'תראה לי את ההעברות שקיבלתי החודש',
+    createChatCompletion: createLlmMock({
+      domain: 'transactions',
+      intent: 'recent_transactions',
+      semanticQuery: {
+        domain: 'transactions',
+        intent: 'transactions_query',
+        action: 'transfer_money',
+        filters: { type: 'transfer' },
+        timeRange: null,
+        aggregation: 'list',
+        limit: null
+      }
+    })
+  });
+
+  assert.equal(result.source, 'llm_semantic_parser');
+  assert.equal(result.domain, 'transactions');
+  assert.equal(result.intent, 'recent_transactions');
+  assert.deepEqual(result.semanticQuery, {
+    domain: 'transactions',
+    intent: 'transactions_query',
+    action: 'transfer_money',
+    filters: { type: 'transfer', direction: 'incoming' },
+    timeRange: null,
+    aggregation: 'list',
+    limit: null,
+    dateRange: { from: '2026-06-01', to: '2026-06-04' }
+  });
+});
+
+test('detectIntent normalizes Hebrew last-week limited transfer history from LLM semantic result', async () => {
+  freezePromptDate();
+
+  const result = await detectIntent({
+    userInput: 'תראה לי 3 העברות מהשבוע האחרון',
+    createChatCompletion: createLlmMock({
+      domain: 'transactions',
+      intent: 'recent_transactions',
+      semanticQuery: {
+        domain: 'transactions',
+        intent: 'transactions_query',
+        action: 'transfer_money',
+        filters: { type: 'transfer' },
+        timeRange: null,
+        aggregation: 'list',
+        limit: null
+      }
+    })
+  });
+
+  assert.equal(result.source, 'llm_semantic_parser');
+  assert.equal(result.domain, 'transactions');
+  assert.equal(result.intent, 'recent_transactions');
+  assert.deepEqual(result.semanticQuery, {
+    domain: 'transactions',
+    intent: 'transactions_query',
+    action: 'transfer_money',
+    filters: { type: 'transfer' },
+    timeRange: null,
+    aggregation: 'first_n',
+    limit: 3,
+    dateRange: { from: '2026-05-29', to: '2026-06-04' },
     sortDirection: 'desc'
   });
 });

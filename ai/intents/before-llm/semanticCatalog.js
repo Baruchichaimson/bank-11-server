@@ -80,6 +80,7 @@ export const ALLOWED_INTENTS = [
 ];
 export const ALLOWED_ACTIONS = ['transfer_money', 'withdraw_money', 'deposit_money', null];
 export const ALLOWED_TYPES = ['transfer', 'withdraw', 'deposit', null];
+export const ALLOWED_DIRECTIONS = ['outgoing', 'incoming', 'all', null];
 export const ALLOWED_TIME_RANGES = [null];
 export const ALLOWED_AGGREGATIONS = ['count', 'list', 'first_n', 'counterparty'];
 export const ALLOWED_CORRECTION_FIELDS = ['amount', 'recipient', 'account', 'note', 'unknown'];
@@ -196,6 +197,9 @@ export const SEMANTIC_CATALOG = {
     queryConstructionRules: [
       'For generic financial activity history, keep action null and filters.type null.',
       'For transfer history, set action transfer_money and filters.type transfer.',
+      'For transfers the user sent or performed, set filters.direction outgoing.',
+      'For transfers the user received or incoming transfers, set filters.direction incoming.',
+      'For all transfers, omit filters.direction or set it to all.',
       'For withdrawal history, set action withdraw_money and filters.type withdraw.',
       'For deposit history, set action deposit_money and filters.type deposit.',
       'Use limit only when the user explicitly requests a number of rows; do not invent a default limit.'
@@ -234,7 +238,7 @@ export const RESPONSE_CONTRACT = {
     domain: ['transactions'],
     intent: ['transactions_query'],
     action: ALLOWED_ACTIONS,
-    filters: { type: ALLOWED_TYPES },
+    filters: { type: ALLOWED_TYPES, direction: ALLOWED_DIRECTIONS },
     timeRange: ALLOWED_TIME_RANGES,
     dateRange: { from: ['YYYY-MM-DD', null], to: ['YYYY-MM-DD', null] },
     aggregation: ALLOWED_AGGREGATIONS,
@@ -263,7 +267,10 @@ const COMPACT_ROUTER_CONTRACT = {
         domain: 'transactions',
         intent: 'transactions_query',
         action: ALLOWED_ACTIONS,
-        filters: { type: ALLOWED_TYPES },
+        filters: {
+          type: ALLOWED_TYPES,
+          direction: 'outgoing for שביצעתי/ששלחתי, incoming for שקיבלתי/נכנסות, all/null for כל ההעברות'
+        },
         timeRange: null,
         dateRange: { from: 'YYYY-MM-DD|null', to: 'YYYY-MM-DD|null' },
         aggregation: ALLOWED_AGGREGATIONS,
@@ -307,6 +314,7 @@ const COMPACT_ROUTER_CONTRACT = {
     'N newest/latest/recent rows => aggregation first_n and limit N',
     'show matching activity without explicit count => aggregation list',
     'transfer history => action transfer_money and filters.type transfer',
+    'sent/performed transfers => filters.direction outgoing; received/incoming transfers => filters.direction incoming',
     'generic activity history => action null and filters.type null',
     'resolve relative dates using currentDate from payload; return YYYY-MM-DD only',
     'European/Hebrew numeric dates are day/month/year'
