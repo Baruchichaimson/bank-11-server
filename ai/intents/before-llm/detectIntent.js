@@ -59,43 +59,6 @@ const isTransactionCountQuestion = (userInput) => {
   return asksCount && textHasTransactionNoun(text);
 };
 
-const isTransactionListQuestion = (userInput) => {
-  const text = normalizeUserText(userInput);
-  const asksList = text.includes('מה הם')
-    || text.includes('מה הן')
-    || text.includes('תראה')
-    || text.includes('הראה')
-    || text.includes('הצג')
-    || text.includes('פירוט')
-    || text.includes('תן לי')
-    || text.includes('show')
-    || text.includes('list')
-    || text.includes('display');
-  return asksList && textHasTransactionNoun(text);
-};
-
-const isSingleLatestTransferQuestion = (userInput) => {
-  const text = normalizeUserText(userInput);
-  return text.includes('העברה אחרונה')
-    || text.includes('העברה האחרונה')
-    || text.includes('last transfer')
-    || text.includes('latest transfer')
-    || text.includes('newest transfer');
-};
-
-const extractRequestedTransactionLimit = (userInput) => {
-  const text = normalizeUserText(userInput);
-  if (!textHasTransactionNoun(text)) return null;
-
-  const tokens = text.split(' ');
-  for (const token of tokens) {
-    const value = Number(token);
-    if (Number.isInteger(value) && value > 0 && value <= 100) return value;
-  }
-
-  return null;
-};
-
 const createTransactionCountSemanticQuery = () => ({
   domain: 'transactions',
   intent: 'transactions_query',
@@ -105,30 +68,6 @@ const createTransactionCountSemanticQuery = () => ({
   aggregation: 'count',
   limit: null
 });
-
-const fixListQuestionLimitOne = ({ userInput, semanticQuery }) => {
-  if (!semanticQuery || typeof semanticQuery !== 'object') return semanticQuery;
-  if (!isTransactionListQuestion(userInput)) return semanticQuery;
-  if (isSingleLatestTransferQuestion(userInput)) return semanticQuery;
-  if (semanticQuery.aggregation !== 'first_n' || semanticQuery.limit !== 1) return semanticQuery;
-
-  const requestedLimit = extractRequestedTransactionLimit(userInput);
-  if (requestedLimit) {
-    return {
-      ...semanticQuery,
-      aggregation: 'first_n',
-      limit: requestedLimit,
-      sortDirection: semanticQuery.sortDirection || 'desc'
-    };
-  }
-
-  const { sortDirection, ...withoutSortDirection } = semanticQuery;
-  return {
-    ...withoutSortDirection,
-    aggregation: 'list',
-    limit: null
-  };
-};
 
 const normalizeFinalSemanticQuery = ({ userInput, finalParse }) => {
   const shouldForceCount = isTransactionCountQuestion(userInput);
