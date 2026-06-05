@@ -228,6 +228,82 @@ test('banking graph does not override LLM output with local balance keyword pars
   assert.doesNotMatch(balanceResult.reply, /היתרה הנוכחית/);
 });
 
+test('banking graph routes Hebrew balance fallback requests to balance workflow', async () => {
+  const calls = [];
+  const isolatedServices = {
+    ...services,
+    accountService: {
+      async getBalance({ userId }) {
+        calls.push(userId);
+        return { found: true, balance: 4200, currency: 'ILS', status: 'active' };
+      }
+    }
+  };
+
+  for (const userInput of ['מה היתרה שלי', 'כמה כסף יש לי', 'מה היתרה בחשבון']) {
+    const result = await runBankingGraph({
+      userInput,
+      userId: 'user-1',
+      history: [],
+      createChatCompletion: null,
+      services: isolatedServices
+    });
+
+    assert.match(result.reply, /היתרה הנוכחית שלך היא 4200 ILS/);
+    assert.equal(result.action, null);
+  }
+
+  assert.deepEqual(calls, ['user-1', 'user-1', 'user-1']);
+});
+
+test('banking graph routes Hebrew profile fallback requests to personal details workflow', async () => {
+  const calls = [];
+  const isolatedServices = {
+    ...services,
+    profileService: {
+      async getUserProfile({ userId }) {
+        calls.push(userId);
+        return {
+          found: true,
+          firstName: 'Jane',
+          lastName: 'Doe',
+          email: 'jane@example.com'
+        };
+      }
+    }
+  };
+
+  const nameResult = await runBankingGraph({
+    userInput: 'מה השם שלי',
+    userId: 'user-1',
+    history: [],
+    createChatCompletion: null,
+    services: isolatedServices
+  });
+  const emailResult = await runBankingGraph({
+    userInput: 'מה המייל שלי',
+    userId: 'user-1',
+    history: [],
+    createChatCompletion: null,
+    services: isolatedServices
+  });
+  const detailsResult = await runBankingGraph({
+    userInput: 'מה הפרטים שלי',
+    userId: 'user-1',
+    history: [],
+    createChatCompletion: null,
+    services: isolatedServices
+  });
+
+  assert.match(nameResult.reply, /שמך הוא Jane Doe/);
+  assert.match(emailResult.reply, /jane@example\.com/);
+  assert.match(detailsResult.reply, /שמך הוא Jane Doe/);
+  assert.match(detailsResult.reply, /jane@example\.com/);
+  assert.equal(nameResult.action, null);
+  assert.equal(emailResult.action, null);
+  assert.deepEqual(calls, ['user-1', 'user-1', 'user-1']);
+});
+
 test('banking graph opens transfer form for transfer intent', async () => {
   const result = await runBankingGraph({
     userInput: 'send money',

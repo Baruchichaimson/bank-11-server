@@ -90,11 +90,36 @@ const HEBREW_TRANSFER_START_PATTERNS = [
   /(?:^|\s)(?:תעביר|העבר)\s+(?:לי\s+)?כסף(?:\s|$)/
 ];
 
+const HEBREW_BALANCE_PATTERNS = [
+  /(?:^|\s)מה\s+ה?יי?תרה\s+(?:שלי|בחשבון(?:\s+שלי)?)(?:\s|$)/,
+  /(?:^|\s)כמה\s+כסף\s+יש\s+לי(?:\s|$)/,
+  /(?:^|\s)(?:תראה|הראה|הצג|תציג)\s+(?:לי\s+)?ה?יי?תרה(?:\s|$)/
+];
+
+const HEBREW_PROFILE_PATTERNS = [
+  /(?:^|\s)מה\s+ה?שם\s+שלי(?:\s|$)/,
+  /(?:^|\s)מה\s+ה?(?:מייל|אימייל)\s+שלי(?:\s|$)/,
+  /(?:^|\s)איזה\s+(?:מייל|אימייל)\s+יש\s+לי\s+במערכת(?:\s|$)/,
+  /(?:^|\s)מה\s+ה?פרטים(?:\s+האישיים)?\s+שלי(?:\s|$)/
+];
+
 const isObviousHebrewTransferStart = (userInput) => {
   const text = normalizeUserText(userInput);
   if (!/[\u0590-\u05FF]/.test(text)) return false;
   if (isTransactionCountQuestion(userInput)) return false;
   return HEBREW_TRANSFER_START_PATTERNS.some((pattern) => pattern.test(text));
+};
+
+const isObviousHebrewBalanceRequest = (userInput) => {
+  const text = normalizeUserText(userInput);
+  if (!/[\u0590-\u05FF]/.test(text)) return false;
+  return HEBREW_BALANCE_PATTERNS.some((pattern) => pattern.test(text));
+};
+
+const isObviousHebrewProfileRequest = (userInput) => {
+  const text = normalizeUserText(userInput);
+  if (!/[\u0590-\u05FF]/.test(text)) return false;
+  return HEBREW_PROFILE_PATTERNS.some((pattern) => pattern.test(text));
 };
 
 const createHebrewTransferStartFallback = () => createIntentResult({
@@ -104,11 +129,27 @@ const createHebrewTransferStartFallback = () => createIntentResult({
   source: 'deterministic_hebrew_transfer_start'
 });
 
+const createHebrewBalanceFallback = () => createIntentResult({
+  domain: 'account',
+  intent: 'check_balance',
+  confidence: 0.9,
+  source: 'deterministic_hebrew_balance'
+});
+
+const createHebrewProfileFallback = () => createIntentResult({
+  domain: 'profile',
+  intent: 'show_personal_details',
+  confidence: 0.9,
+  source: 'deterministic_hebrew_profile'
+});
+
 const applyDeterministicFallback = ({ userInput, finalParse }) => {
   if (finalParse.intent !== 'unknown') return finalParse;
   if (finalParse.ambiguity?.isAmbiguous) return finalParse;
-  if (!isObviousHebrewTransferStart(userInput)) return finalParse;
-  return createHebrewTransferStartFallback();
+  if (isObviousHebrewTransferStart(userInput)) return createHebrewTransferStartFallback();
+  if (isObviousHebrewBalanceRequest(userInput)) return createHebrewBalanceFallback();
+  if (isObviousHebrewProfileRequest(userInput)) return createHebrewProfileFallback();
+  return finalParse;
 };
 
 const normalizeFinalSemanticQuery = ({ userInput, finalParse }) => {

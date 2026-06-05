@@ -377,9 +377,75 @@ test('detectIntent uses deterministic fallback for obvious Hebrew transfer start
   assert.equal(result.intent, 'transfer_money');
 });
 
-test('detectIntent does not use transfer fallback for unrelated Hebrew when LLM is unavailable', async () => {
+test('detectIntent uses deterministic fallback for obvious Hebrew balance requests', async () => {
+  const phrases = [
+    'מה היתרה שלי',
+    'כמה כסף יש לי',
+    'מה היתרה בחשבון',
+    'תראה לי יתרה'
+  ];
+
+  for (const phrase of phrases) {
+    const result = await detectIntent({
+      userInput: phrase,
+      createChatCompletion: null
+    });
+
+    assert.equal(result.source, 'deterministic_hebrew_balance', phrase);
+    assert.equal(result.domain, 'account', phrase);
+    assert.equal(result.intent, 'check_balance', phrase);
+    assert.equal(result.semanticQuery, null, phrase);
+    assert.equal(result.tool, null, phrase);
+  }
+});
+
+test('detectIntent uses deterministic fallback for obvious Hebrew profile requests', async () => {
+  const phrases = [
+    'מה השם שלי',
+    'מה המייל שלי',
+    'איזה אימייל יש לי במערכת',
+    'מה הפרטים שלי'
+  ];
+
+  for (const phrase of phrases) {
+    const result = await detectIntent({
+      userInput: phrase,
+      createChatCompletion: null
+    });
+
+    assert.equal(result.source, 'deterministic_hebrew_profile', phrase);
+    assert.equal(result.domain, 'profile', phrase);
+    assert.equal(result.intent, 'show_personal_details', phrase);
+    assert.equal(result.semanticQuery, null, phrase);
+    assert.equal(result.tool, null, phrase);
+  }
+});
+
+test('detectIntent uses deterministic balance and profile fallback when LLM returns unknown', async () => {
+  const balance = await detectIntent({
+    userInput: 'מה היתרה שלי',
+    createChatCompletion: createLlmMock({
+      domain: 'unknown',
+      intent: 'unknown'
+    })
+  });
+  const profile = await detectIntent({
+    userInput: 'מה המייל שלי',
+    createChatCompletion: createLlmMock({
+      domain: 'unknown',
+      intent: 'unknown'
+    })
+  });
+
+  assert.equal(balance.source, 'deterministic_hebrew_balance');
+  assert.equal(balance.intent, 'check_balance');
+  assert.equal(profile.source, 'deterministic_hebrew_profile');
+  assert.equal(profile.intent, 'show_personal_details');
+});
+
+test('detectIntent does not use deterministic fallback for unrelated Hebrew when LLM is unavailable', async () => {
   const result = await detectIntent({
-    userInput: 'מה הייתרה שלי?',
+    userInput: 'מה קורה?',
     createChatCompletion: null
   });
 
