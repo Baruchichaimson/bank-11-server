@@ -50,6 +50,7 @@ Core routing:
 - starting/confirming/correcting/canceling a new transfer => domain transactions, intent transfer_money.
 - stored user identity/profile details => domain profile, intent show_personal_details.
 - representative/support/video call => domain support, intent contact_support.
+- Hebrew requests like "תתקשר לנציג", "אני רוצה לדבר עם נציג", "תחבר אותי לנציג", or "שיחת וידאו עם נציג" => domain support, intent contact_support.
 - unsupported, casual, or ambiguous input => domain unknown, intent unknown, toolName null.
 - toolName is legacy compatibility. Use it only for UI actions or legacy payloads; do not use toolName as the primary way to request banking data.
 
@@ -82,6 +83,10 @@ Date extraction:
 - Keep semanticQuery.timeRange=null. Never return database filters, createdAt, or Date objects.
 
 Examples:
+- User: "תתקשר לנציג"
+  JSON: {"domain":"support","intent":"contact_support","confidence":0.95,"semanticQuery":null,"toolName":null}
+- User: "אני רוצה לדבר עם נציג"
+  JSON: {"domain":"support","intent":"contact_support","confidence":0.95,"semanticQuery":null,"toolName":null}
 - User: "מה הם 2 העברות האחרונות שביצעתי?"
   JSON: {"domain":"transactions","intent":"recent_transactions","confidence":0.95,"semanticQuery":{"domain":"transactions","intent":"transactions_query","action":"transfer_money","filters":{"type":"transfer","direction":"outgoing"},"timeRange":null,"aggregation":"first_n","limit":2,"sortDirection":"desc"}}
 - User: "תראה לי את ההעברות שקיבלתי החודש"
@@ -113,6 +118,7 @@ const DOMAIN_ALIASES = {
   transfers: 'transactions',
   transaction: 'transactions',
   representative: 'support',
+  agent: 'support',
   help: 'support'
 };
 
@@ -132,6 +138,13 @@ const INTENT_ALIASES = {
   send_money: 'transfer_money',
   make_transfer: 'transfer_money',
   open_video_call_window: 'contact_support',
+  talk_to_agent: 'contact_support',
+  talk_to_representative: 'contact_support',
+  contact_agent: 'contact_support',
+  contact_representative: 'contact_support',
+  connect_representative: 'contact_support',
+  start_video_call: 'contact_support',
+  video_call: 'contact_support',
   support: 'contact_support',
   representative: 'contact_support'
 };

@@ -52,6 +52,32 @@ test('banking graph routes support through LLM-selected support workflow', async
   assert.match(result.reply, /video call/i);
 });
 
+test('banking graph routes Hebrew support fallback requests to support workflow', async () => {
+  const calls = [];
+  const supportServices = {
+    ...services,
+    supportService: {
+      async connectRepresentative({ userId }) {
+        calls.push(userId);
+        return { found: true, action: 'open_video_call' };
+      }
+    }
+  };
+
+  const result = await runBankingGraph({
+    userInput: 'תתקשר לנציג',
+    userId: 'user-1',
+    history: [],
+    createChatCompletion: null,
+    services: supportServices
+  });
+
+  assert.deepEqual(calls, ['user-1']);
+  assert.equal(result.action, 'open_video_call');
+  assert.equal(result.nextTransferState, null);
+  assert.match(result.reply, /פתחתי עבורך את חלון שיחת הווידאו/);
+});
+
 test('banking graph keeps casual non-banking input unknown without opening support', async () => {
   let calls = 0;
   const createChatCompletion = async () => {

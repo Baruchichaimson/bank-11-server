@@ -131,8 +131,8 @@ export const SEMANTIC_CATALOG = {
       intent: 'contact_support',
       domain: 'support',
       workflow: 'support_workflow',
-      chooseWhen: 'The user wants a human representative, support contact, service help, or a video-call interaction.',
-      doNotChooseWhen: 'The user asks a general greeting, generic question, balance, transactions, profile details, or money transfer execution.'
+      chooseWhen: 'The user wants a human representative, support contact, service help, or a video-call interaction. Hebrew examples include תתקשר לנציג, אני רוצה לדבר עם נציג, תחבר אותי לנציג, שיחת וידאו עם נציג.',
+      doNotChooseWhen: 'The user asks a general greeting, generic question, balance, transactions, profile details, money transfer execution, or generic help without asking for a representative/contact flow.'
     },
     {
       intent: 'transfer_money',
@@ -297,8 +297,8 @@ const COMPACT_ROUTER_CONTRACT = {
       domain: 'support',
       intent: 'contact_support',
       toolName: 'open_video_call_window',
-      chooseWhen: 'human representative, support interaction, video call',
-      doNotChooseWhen: 'generic greetings or ordinary banking actions'
+      chooseWhen: 'human representative, support interaction, contact agent, video call, תתקשר לנציג, לדבר עם נציג, תחבר אותי לנציג, שיחת וידאו עם נציג',
+      doNotChooseWhen: 'generic greetings, ordinary banking actions, or generic help without a representative/contact request'
     },
     {
       domain: 'unknown',

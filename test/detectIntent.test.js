@@ -102,6 +102,9 @@ test('buildSemanticParserPrompt is driven by semantic intent contract, not phras
   assert.match(prompt, /classify by the meaning/i);
   assert.match(prompt, /"chooseWhen"/);
   assert.match(prompt, /"doNotChooseWhen"/);
+  assert.match(prompt, /תתקשר לנציג/);
+  assert.match(prompt, /אני רוצה לדבר עם נציג/);
+  assert.match(prompt, /contact_support/);
   assert.doesNotMatch(prompt, /"signals"/);
   assert.doesNotMatch(prompt, /"aliases"/);
   assert.doesNotMatch(prompt, /"toolQueryDefaults"/);
@@ -178,6 +181,18 @@ test('validateLlmSemanticParse maps legacy tool names to canonical domains and i
   assert.equal(result.domain, 'account');
   assert.equal(result.intent, 'check_balance');
   assert.deepEqual(result.tool, { name: 'get_balance', args: {} });
+});
+
+test('validateLlmSemanticParse maps support intent aliases to contact_support', () => {
+  const result = validateLlmSemanticParse({
+    domain: 'support',
+    intent: 'talk_to_agent'
+  });
+
+  assert.equal(result.domain, 'support');
+  assert.equal(result.intent, 'contact_support');
+  assert.equal(result.tool, null);
+  assert.equal(result.semanticQuery, null);
 });
 
 test('validateLlmSemanticParse builds counterparty query from tool args', () => {
@@ -425,6 +440,47 @@ test('detectIntent uses deterministic fallback for obvious Hebrew profile reques
   }
 });
 
+test('detectIntent uses deterministic fallback for obvious Hebrew support requests', async () => {
+  const phrases = [
+    'תתקשר לנציג',
+    'אני רוצה לדבר עם נציג',
+    'אפשר נציג?',
+    'תחבר אותי לנציג',
+    'תפתח שיחה עם נציג',
+    'אני צריך עזרה מנציג',
+    'שיחת וידאו עם נציג',
+    'תעשה לי שיחה עם נציג',
+    'צור קשר עם נציג'
+  ];
+
+  for (const phrase of phrases) {
+    const result = await detectIntent({
+      userInput: phrase,
+      createChatCompletion: null
+    });
+
+    assert.equal(result.source, 'deterministic_hebrew_support', phrase);
+    assert.equal(result.domain, 'support', phrase);
+    assert.equal(result.intent, 'contact_support', phrase);
+    assert.equal(result.semanticQuery, null, phrase);
+    assert.equal(result.tool, null, phrase);
+  }
+});
+
+test('detectIntent uses deterministic support fallback when LLM returns unknown', async () => {
+  const result = await detectIntent({
+    userInput: 'תתקשר לנציג',
+    createChatCompletion: createLlmMock({
+      domain: 'unknown',
+      intent: 'unknown'
+    })
+  });
+
+  assert.equal(result.source, 'deterministic_hebrew_support');
+  assert.equal(result.domain, 'support');
+  assert.equal(result.intent, 'contact_support');
+});
+
 test('detectIntent uses deterministic balance and profile fallback when LLM returns unknown', async () => {
   const balance = await detectIntent({
     userInput: 'מה היתרה שלי',
@@ -457,6 +513,17 @@ test('detectIntent does not use deterministic fallback for unrelated Hebrew when
   assert.equal(result.domain, 'unknown');
   assert.equal(result.intent, 'unknown');
   assert.equal(result.tool, null);
+});
+
+test('detectIntent does not classify generic Hebrew help as support without a representative request', async () => {
+  const result = await detectIntent({
+    userInput: 'אני צריך עזרה',
+    createChatCompletion: null
+  });
+
+  assert.equal(result.source, 'llm_unavailable');
+  assert.equal(result.domain, 'unknown');
+  assert.equal(result.intent, 'unknown');
 });
 
 test('detectIntent logs invalid LLM parser responses', async (t) => {

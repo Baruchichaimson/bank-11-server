@@ -103,6 +103,18 @@ const HEBREW_PROFILE_PATTERNS = [
   /(?:^|\s)מה\s+ה?פרטים(?:\s+האישיים)?\s+שלי(?:\s|$)/
 ];
 
+const HEBREW_SUPPORT_PATTERNS = [
+  /(?:^|\s)(?:תתקשר|התקשר|תתקשרו|תתקשרי)\s+(?:לי\s+)?(?:אל\s+)?ל?נציג(?:\s|$)/,
+  /(?:^|\s)(?:אני\s+)?(?:רוצה|צריך|צריכה|מעוניין|מעוניינת)\s+לדבר\s+עם\s+נציג(?:\s|$)/,
+  /(?:^|\s)אפשר\s+(?:לדבר\s+עם\s+)?נציג(?:\s|$)/,
+  /(?:^|\s)(?:תחבר|חבר|חברי|חברו)\s+(?:אותי|לי)\s+(?:אל\s+|עם\s+|ל)?נציג(?:\s|$)/,
+  /(?:^|\s)(?:תפתח|פתח|פתחי|פתחו)\s+(?:לי\s+)?שיחה\s+עם\s+נציג(?:\s|$)/,
+  /(?:^|\s)(?:אני\s+)?(?:צריך|צריכה|רוצה)\s+עזרה\s+(?:מנציג|עם\s+נציג)(?:\s|$)/,
+  /(?:^|\s)שיחת\s+וידאו\s+עם\s+נציג(?:\s|$)/,
+  /(?:^|\s)(?:תעשה|עשה|עשי|עשו)\s+(?:לי\s+)?שיחה\s+עם\s+נציג(?:\s|$)/,
+  /(?:^|\s)צור\s+קשר\s+עם\s+נציג(?:\s|$)/
+];
+
 const isObviousHebrewTransferStart = (userInput) => {
   const text = normalizeUserText(userInput);
   if (!/[\u0590-\u05FF]/.test(text)) return false;
@@ -120,6 +132,12 @@ const isObviousHebrewProfileRequest = (userInput) => {
   const text = normalizeUserText(userInput);
   if (!/[\u0590-\u05FF]/.test(text)) return false;
   return HEBREW_PROFILE_PATTERNS.some((pattern) => pattern.test(text));
+};
+
+const isObviousHebrewSupportRequest = (userInput) => {
+  const text = normalizeUserText(userInput);
+  if (!/[\u0590-\u05FF]/.test(text)) return false;
+  return HEBREW_SUPPORT_PATTERNS.some((pattern) => pattern.test(text));
 };
 
 const createHebrewTransferStartFallback = () => createIntentResult({
@@ -143,12 +161,20 @@ const createHebrewProfileFallback = () => createIntentResult({
   source: 'deterministic_hebrew_profile'
 });
 
+const createHebrewSupportFallback = () => createIntentResult({
+  domain: 'support',
+  intent: 'contact_support',
+  confidence: 0.9,
+  source: 'deterministic_hebrew_support'
+});
+
 const applyDeterministicFallback = ({ userInput, finalParse }) => {
   if (finalParse.intent !== 'unknown') return finalParse;
   if (finalParse.ambiguity?.isAmbiguous) return finalParse;
   if (isObviousHebrewTransferStart(userInput)) return createHebrewTransferStartFallback();
   if (isObviousHebrewBalanceRequest(userInput)) return createHebrewBalanceFallback();
   if (isObviousHebrewProfileRequest(userInput)) return createHebrewProfileFallback();
+  if (isObviousHebrewSupportRequest(userInput)) return createHebrewSupportFallback();
   return finalParse;
 };
 
