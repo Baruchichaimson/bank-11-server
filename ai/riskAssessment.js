@@ -1,4 +1,4 @@
-import { Transaction } from '../entities/transactions.js';
+import { TransactionRepository } from './repositories/transactionRepository.js';
 
 const HIGH_RISK_THRESHOLD = 70;
 const MEDIUM_RISK_THRESHOLD = 40;
@@ -15,7 +15,8 @@ export const assessTransferRisk = async ({
   senderEmail,
   receiverEmail,
   amount,
-  senderBalance
+  senderBalance,
+  transactionRepository = new TransactionRepository()
 }) => {
   const reasons = [];
   let score = 0;
@@ -31,9 +32,9 @@ export const assessTransferRisk = async ({
     reasons.push('Elevated transfer amount');
   }
 
-  const hasBeneficiaryHistory = await Transaction.exists({
-    fromEmail: senderEmail,
-    toEmail: receiverEmail
+  const hasBeneficiaryHistory = await transactionRepository.hasBeneficiaryHistory({
+    senderEmail,
+    receiverEmail
   });
   if (!hasBeneficiaryHistory) {
     score += 25;
@@ -41,9 +42,9 @@ export const assessTransferRisk = async ({
   }
 
   const oneHourAgo = new Date(Date.now() - ONE_HOUR_MS);
-  const recentOutgoingCount = await Transaction.countDocuments({
-    fromEmail: senderEmail,
-    createdAt: { $gte: oneHourAgo }
+  const recentOutgoingCount = await transactionRepository.countOutgoingSince({
+    email: senderEmail,
+    since: oneHourAgo
   });
   if (recentOutgoingCount >= 5) {
     score += 35;
@@ -78,4 +79,3 @@ export const assessTransferRisk = async ({
     }
   };
 };
-

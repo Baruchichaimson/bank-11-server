@@ -1,8 +1,8 @@
-import accountsModel from '../../models/accountsModel.js';
+import { AccountRepository } from '../repositories/accountRepository.js';
 
-export const createAccountService = () => ({
+export const createAccountService = ({ accountRepository = new AccountRepository() } = {}) => ({
   async getBalance({ userId }) {
-    const account = await accountsModel.findAccountByUserId(userId);
+    const account = await accountRepository.findAccountByUserId(userId);
     if (!account) return { found: false, message: 'Account not found' };
 
     return {
@@ -18,10 +18,10 @@ export const createAccountService = () => ({
   },
 
   async getAccountByUserId(userId) {
-    return accountsModel.findAccountByUserId(userId);
+    return accountRepository.findAccountByUserId(userId);
   },
 
   async findAccountById(accountId) {
-    return accountsModel.findAccountById(accountId);
+    return accountRepository.findAccountById(accountId);
   }
 });

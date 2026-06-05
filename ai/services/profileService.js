@@ -1,8 +1,8 @@
-import usersModel from '../../models/usersModel.js';
+import { ProfileRepository } from '../repositories/profileRepository.js';
 
-export const createProfileService = () => ({
+export const createProfileService = ({ profileRepository = new ProfileRepository() } = {}) => ({
   async getUserProfile({ userId }) {
-    const user = await usersModel.findUserById(userId);
+    const user = await profileRepository.findUserById(userId);
     if (!user) return { found: false, message: 'User not found' };
 
     return {
@@ -18,10 +18,10 @@ export const createProfileService = () => ({
   },
 
   async getUserById(userId) {
-    return usersModel.findUserById(userId);
+    return profileRepository.findUserById(userId);
   },
 
   async getUserByEmail(email) {
-    return usersModel.findUserByEmail(String(email || '').toLowerCase());
+    return profileRepository.findUserByEmail(email);
   }
 });

@@ -1,5 +1,10 @@
 import { Transaction } from '../../entities/transactions.js';
 import { User } from '../../entities/users.js';
+import {
+  findTransactionsWithCounterpartyName,
+  findTransactionsByUserId,
+  transferMoney
+} from '../../models/transactionsModel.js';
 
 const normalizeEmail = (value) => String(value || '').trim().toLowerCase();
 
@@ -85,5 +90,47 @@ export class TransactionRepository {
     const safeLimit = Number.isInteger(limit) && limit > 0 ? Math.min(limit, 100) : 10;
     cursor.limit(safeLimit);
     return cursor.lean();
+  }
+
+  async findTransactionsWithCounterpartyName(userId, recipientName) {
+    return findTransactionsWithCounterpartyName(userId, recipientName);
+  }
+
+  async findTransactionsByUserId(userId, options = {}) {
+    return findTransactionsByUserId(userId, options);
+  }
+
+  async executeTransfer({ fromAccountId, toAccountId, amount, description }) {
+    return transferMoney({ fromAccountId, toAccountId, amount, description });
+  }
+
+  async listRecentByEmail({ email, limit = 5 }) {
+    return Transaction.find({
+      $or: [{ fromEmail: email }, { toEmail: email }]
+    })
+      .sort({ createdAt: -1 })
+      .limit(limit)
+      .lean();
+  }
+
+  async countMonthlyOutgoingTransfers({ email, since }) {
+    return Transaction.countDocuments({
+      fromEmail: email,
+      createdAt: { $gte: since }
+    });
+  }
+
+  async hasBeneficiaryHistory({ senderEmail, receiverEmail }) {
+    return Transaction.exists({
+      fromEmail: senderEmail,
+      toEmail: receiverEmail
+    });
+  }
+
+  async countOutgoingSince({ email, since }) {
+    return Transaction.countDocuments({
+      fromEmail: email,
+      createdAt: { $gte: since }
+    });
   }
 }

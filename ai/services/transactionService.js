@@ -1,9 +1,3 @@
-import { Transaction } from '../../entities/transactions.js';
-import {
-  findTransactionsWithCounterpartyName,
-  findTransactionsByUserId,
-  transferMoney
-} from '../../models/transactionsModel.js';
 import { TransactionRepository } from '../repositories/transactionRepository.js';
 import { QueryExecutor } from './queryExecutor.js';
 
@@ -65,8 +59,7 @@ const formatTransfer = (tx) => ({
   createdAt: toIso(tx.createdAt)
 });
 
-export const createTransactionService = ({ accountService, profileService } = {}) => {
-  const transactionRepository = new TransactionRepository();
+export const createTransactionService = ({ accountService, profileService, transactionRepository = new TransactionRepository() } = {}) => {
   const queryExecutor = new QueryExecutor({
     transactionRepository,
     accountService,
@@ -81,7 +74,7 @@ export const createTransactionService = ({ accountService, profileService } = {}
       return { found: false, message: 'recipientName is required' };
     }
 
-    const transactions = await findTransactionsWithCounterpartyName(userId, recipientName);
+    const transactions = await transactionRepository.findTransactionsWithCounterpartyName(userId, recipientName);
     const items = (transactions || []).slice(0, 10).map(formatTransfer);
 
     if (!items.length) {
@@ -121,7 +114,7 @@ export const createTransactionService = ({ accountService, profileService } = {}
         ? Math.min(Math.max(Math.floor(requestedLimit), 1), 100)
         : 3;
 
-      const transactions = await findTransactionsByUserId(userId);
+      const transactions = await transactionRepository.findTransactionsByUserId(userId);
       const filtered = (transactions || []).filter((tx) => {
         const createdAt = new Date(tx.createdAt);
         return createdAt >= range.start && createdAt <= range.end;
@@ -139,7 +132,7 @@ export const createTransactionService = ({ accountService, profileService } = {}
     },
 
     async getLastTransfer({ userId }) {
-      const transactions = await findTransactionsByUserId(userId);
+      const transactions = await transactionRepository.findTransactionsByUserId(userId);
 
       if (!transactions?.length) {
         return { found: false, message: 'No transactions found' };
@@ -159,7 +152,7 @@ export const createTransactionService = ({ accountService, profileService } = {}
         return { found: false, message: 'Invalid date range format' };
       }
 
-      const transactions = await findTransactionsByUserId(userId);
+      const transactions = await transactionRepository.findTransactionsByUserId(userId);
 
       if (!transactions?.length) {
         return {
@@ -195,27 +188,19 @@ export const createTransactionService = ({ accountService, profileService } = {}
     },
 
     async executeTransfer({ fromAccountId, toAccountId, amount, description }) {
-      return transferMoney({ fromAccountId, toAccountId, amount, description });
+      return transactionRepository.executeTransfer({ fromAccountId, toAccountId, amount, description });
     },
 
     async getRecentTransactionsByEmail({ email, limit = 5 }) {
-      return Transaction.find({
-        $or: [{ fromEmail: email }, { toEmail: email }]
-      })
-        .sort({ createdAt: -1 })
-        .limit(limit)
-        .lean();
+      return transactionRepository.listRecentByEmail({ email, limit });
     },
 
     async countMonthlyOutgoingTransfers({ email, since }) {
-      return Transaction.countDocuments({
-        fromEmail: email,
-        createdAt: { $gte: since }
-      });
+      return transactionRepository.countMonthlyOutgoingTransfers({ email, since });
     },
 
     async findTransactionsByUserId(userId, options = {}) {
-      return findTransactionsByUserId(userId, options);
+      return transactionRepository.findTransactionsByUserId(userId, options);
     }
   };
 };
