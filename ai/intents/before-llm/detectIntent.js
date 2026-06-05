@@ -27,18 +27,77 @@ const LLM_PARSE_FAILED_PARSE = {
   source: 'llm_parse_failed'
 };
 
+const normalizeUserText = (value) => String(value || '')
+  .trim()
+  .replace(/[־–—]/g, '-')
+  .replace(/["'.,!?;:()[\]{}]/g, ' ')
+  .replace(/\s+/g, ' ')
+  .toLowerCase();
+
+const isTransactionCountQuestion = (userInput) => {
+  const text = normalizeUserText(userInput);
+  const asksCount = /(?:^|\s)כמה(?:\s|$)/.test(text)
+    || /מה\s+(?:מספר|כמות)\s+ה/.test(text)
+    || /how\s+many/i.test(text)
+    || /\bcount\b/i.test(text)
+    || /\bnumber\s+of\b/i.test(text);
+  const hasTransactionNoun = /ה?העברות?|ה?העברה|ה?פעולות?|ה?פעולה|ה?טרנזקציות?|ה?טרנזקציה|transfers?|transactions?|activities|activity/i.test(text);
+  return asksCount && hasTransactionNoun;
+};
+
+const createTransactionCountSemanticQuery = () => ({
+  domain: 'transactions',
+  intent: 'transactions_query',
+  action: 'transfer_money',
+  filters: { type: 'transfer' },
+  timeRange: null,
+  aggregation: 'count',
+  limit: null
+});
+
 const normalizeFinalSemanticQuery = ({ userInput, finalParse }) => {
-  if (finalParse.domain !== 'transactions' || finalParse.intent !== 'recent_transactions') {
+  const shouldForceCount = isTransactionCountQuestion(userInput);
+  const shouldNormalizeTransactions = shouldForceCount
+    || (finalParse.domain === 'transactions' && finalParse.intent === 'recent_transactions');
+
+  if (!shouldNormalizeTransactions) {
     return finalParse.semanticQuery;
   }
+
+  const seedSemanticQuery = shouldForceCount
+    ? {
+      ...createTransactionCountSemanticQuery(),
+      ...(finalParse.semanticQuery || {}),
+      filters: {
+        type: 'transfer',
+        ...(finalParse.semanticQuery?.filters || {})
+      },
+      aggregation: 'count',
+      limit: null
+    }
+    : finalParse.semanticQuery;
 
   const normalized = normalizeTransactionSemanticQuery({
     userInput,
     currentDate: getCurrentDateForPrompt(),
-    semanticQuery: finalParse.semanticQuery
+    semanticQuery: seedSemanticQuery
   });
 
   return validateSemanticQuery(normalized) || finalParse.semanticQuery;
+};
+
+const normalizeFinalParse = ({ userInput, finalParse }) => {
+  if (!isTransactionCountQuestion(userInput)) return finalParse;
+
+  return {
+    ...finalParse,
+    domain: 'transactions',
+    intent: 'recent_transactions',
+    confidence: finalParse.confidence || 0.95,
+    toolName: 'count_transfers',
+    isAmbiguous: false,
+    ambiguityReason: null
+  };
 };
 
 export const detectIntent = async ({
@@ -53,9 +112,10 @@ export const detectIntent = async ({
     createChatCompletion,
     abortSignal
   });
-  const finalParse =
+  const rawFinalParse =
     llmParsed ||
     (createChatCompletion ? LLM_PARSE_FAILED_PARSE : LLM_UNAVAILABLE_PARSE);
+  const finalParse = normalizeFinalParse({ userInput, finalParse: rawFinalParse });
   const semanticQuery = normalizeFinalSemanticQuery({ userInput, finalParse });
 
   return {
