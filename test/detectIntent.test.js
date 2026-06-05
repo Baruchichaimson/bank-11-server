@@ -1,8 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { detectIntent } from '../ai/intents/detectIntent.js';
+import { detectIntent } from '../ai/intents/before-llm/detectIntent.js';
 import { buildSemanticParserPrompt, validateLlmSemanticParse } from '../ai/intents/llmSemanticParser.js';
-import { SEMANTIC_CATALOG } from '../ai/intents/semanticCatalog.js';
+import { SEMANTIC_CATALOG } from '../ai/intents/before-llm/semanticCatalog.js';
 
 const createLlmMock = (payload) => async () => ({
   choices: [{
