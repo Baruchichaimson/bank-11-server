@@ -32,7 +32,8 @@ export const createInitialBankingState = ({
   userId,
   userEmail = null,
   userLanguage = 'en',
-  transferState = null
+  transferState = null,
+  transferPayload = null
 }) => ({
   userInput,
   history,
@@ -48,7 +49,8 @@ export const createInitialBankingState = ({
     detectedIntent: 'unknown',
     confidence: 0,
     isAmbiguous: false,
-    ambiguityReason: null
+    ambiguityReason: null,
+    transferPayload
   },
   workflow: {
     activeWorkflow: 'unknown',

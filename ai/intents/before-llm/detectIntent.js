@@ -49,6 +49,11 @@ const textHasTransactionNoun = (text) => (
   || text.includes('activities')
 );
 
+const TRANSACTION_LIST_NOUN_PATTERN = '(?:ה?העברות?|ה?העברה|ה?פעולות?|ה?פעולה|ה?טרנזקציות?|ה?טרנזקציה|transfers?|transactions?|activities|activity)';
+const SINGULAR_TRANSACTION_NOUN_PATTERN = '(?:ה?העברה|ה?פעולה|ה?טרנזקציה|transfer|transaction|activity)';
+const SINGLE_VALUE_PATTERN = '(?:1|אחד|אחת|one|single)';
+const ORDER_WORD_PATTERN = '(?:אחרונה|אחרון|ראשונה|ראשון|latest|newest|first|earliest|oldest|most\\s+recent)';
+
 const isTransactionCountQuestion = (userInput) => {
   const text = normalizeUserText(userInput);
   const asksCount = /(?:^|\s)כמה(?:\s|$)/.test(text)
@@ -57,6 +62,31 @@ const isTransactionCountQuestion = (userInput) => {
     || /\bcount\b/i.test(text)
     || /\bnumber\s+of\b/i.test(text);
   return asksCount && textHasTransactionNoun(text);
+};
+
+const hasExplicitSingleRowRequest = (text) => (
+  new RegExp(`(?:^|\\s)${SINGLE_VALUE_PATTERN}\\s+${TRANSACTION_LIST_NOUN_PATTERN}(?:\\s|$)`, 'i').test(text)
+  || new RegExp(`${TRANSACTION_LIST_NOUN_PATTERN}\\s+${SINGLE_VALUE_PATTERN}(?:\\s|$)`, 'i').test(text)
+  || new RegExp(`${SINGULAR_TRANSACTION_NOUN_PATTERN}\\s+(?:ה)?${ORDER_WORD_PATTERN}(?:\\s|$)`, 'i').test(text)
+  || new RegExp(`(?:^|\\s)${ORDER_WORD_PATTERN}\\s+${SINGULAR_TRANSACTION_NOUN_PATTERN}(?:\\s|$)`, 'i').test(text)
+);
+
+const fixListQuestionLimitOne = ({ userInput, semanticQuery }) => {
+  const text = normalizeUserText(userInput);
+  const shouldFixAccidentalSingleRow =
+    semanticQuery?.aggregation === 'first_n'
+    && semanticQuery.limit === 1
+    && textHasTransactionNoun(text)
+    && !isTransactionCountQuestion(userInput)
+    && !hasExplicitSingleRowRequest(text);
+
+  if (!shouldFixAccidentalSingleRow) return semanticQuery;
+
+  return {
+    ...semanticQuery,
+    aggregation: 'list',
+    limit: null
+  };
 };
 
 const createTransactionCountSemanticQuery = () => ({
