@@ -28,7 +28,19 @@ def _normalize_execution(execution: dict) -> dict:
     }
 
 
-def create_workflow_response(*, message="", action=None, next_conversation_state=None, execution=None) -> dict:
+def create_workflow_response(
+    *,
+    message="",
+    action=None,
+    next_conversation_state=None,
+    nextConversationState=None,
+    execution=None,
+) -> dict:
+    next_conversation_state = (
+        next_conversation_state
+        if next_conversation_state is not None
+        else nextConversationState
+    )
     return {
         "message": str(message or ""),
         "action": _normalize_action(action),
@@ -38,8 +50,19 @@ def create_workflow_response(*, message="", action=None, next_conversation_state
 
 
 def create_executed_workflow_response(
-    *, message="", action=None, next_conversation_state=None, operation=None, result=None
+    *,
+    message="",
+    action=None,
+    next_conversation_state=None,
+    nextConversationState=None,
+    operation=None,
+    result=None,
 ) -> dict:
+    next_conversation_state = (
+        next_conversation_state
+        if next_conversation_state is not None
+        else nextConversationState
+    )
     return create_workflow_response(
         message=message,
         action=action,
@@ -49,8 +72,19 @@ def create_executed_workflow_response(
 
 
 def create_empty_workflow_response(
-    *, message="", action=None, next_conversation_state=None, operation=None, result=None
+    *,
+    message="",
+    action=None,
+    next_conversation_state=None,
+    nextConversationState=None,
+    operation=None,
+    result=None,
 ) -> dict:
+    next_conversation_state = (
+        next_conversation_state
+        if next_conversation_state is not None
+        else nextConversationState
+    )
     return create_workflow_response(
         message=message,
         action=action,

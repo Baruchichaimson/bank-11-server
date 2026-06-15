@@ -54,16 +54,31 @@ def create_intent_result(
     confidence=0,
     source="safe_unknown",
     workflow_continuation=None,
+    workflowContinuation=None,
     semantic_query=None,
+    semanticQuery=None,
     transfer_payload=None,
+    transferPayload=None,
     correction=None,
     tool=None,
     ambiguity=None,
     tool_name=None,
+    toolName=None,
     tool_args=None,
+    toolArgs=None,
     is_ambiguous=False,
+    isAmbiguous=False,
     ambiguity_reason=None,
+    ambiguityReason=None,
 ) -> dict:
+    workflow_continuation = workflow_continuation if workflow_continuation is not None else workflowContinuation
+    semantic_query = semantic_query if semantic_query is not None else semanticQuery
+    transfer_payload = transfer_payload if transfer_payload is not None else transferPayload
+    tool_name = tool_name or toolName
+    tool_args = tool_args if tool_args is not None else (toolArgs or {})
+    is_ambiguous = is_ambiguous or isAmbiguous
+    ambiguity_reason = ambiguity_reason or ambiguityReason
+
     return {
         "domain": str(domain or "unknown"),
         "intent": str(intent or "unknown"),

@@ -4,6 +4,7 @@ Uses langgraph StateGraph with BankingState TypedDict.
 """
 
 import asyncio
+from langchain_core.runnables import RunnableConfig
 from langgraph.graph import StateGraph, START, END
 from ai.graph.banking_state import BankingState, create_initial_banking_state
 from ai.graph.workflow_router import route_workflow
@@ -60,7 +61,7 @@ async def user_request_node(state: dict) -> dict:
     }
 
 
-async def find_intent_node(state: dict, config: dict = None) -> dict:
+async def find_intent_node(state: dict, config: RunnableConfig | None = None) -> dict:
     configurable = (config or {}).get("configurable") or {}
     transfer_payload = (state.get("intent") or {}).get("transferPayload")
 
@@ -139,34 +140,34 @@ def _get_abort_signal(config):
     return (config or {}).get("configurable", {}).get("abortSignal")
 
 
-async def run_transfer_workflow_node(state: dict, config: dict = None) -> dict:
+async def run_transfer_workflow_node(state: dict, config: RunnableConfig | None = None) -> dict:
     from ai.workflows.transfer_workflow import run_transfer_workflow
     return await run_transfer_workflow(state=state, services=_get_services(config),
                                        create_chat_completion=_get_create_chat_completion(config),
                                        abort_signal=_get_abort_signal(config))
 
 
-async def run_transactions_workflow_node(state: dict, config: dict = None) -> dict:
+async def run_transactions_workflow_node(state: dict, config: RunnableConfig | None = None) -> dict:
     from ai.workflows.transactions_workflow import run_transactions_workflow
     return await run_transactions_workflow(state=state, services=_get_services(config))
 
 
-async def run_balance_workflow_node(state: dict, config: dict = None) -> dict:
+async def run_balance_workflow_node(state: dict, config: RunnableConfig | None = None) -> dict:
     from ai.workflows.balance_workflow import run_balance_workflow
     return await run_balance_workflow(state=state, services=_get_services(config))
 
 
-async def run_support_workflow_node(state: dict, config: dict = None) -> dict:
+async def run_support_workflow_node(state: dict, config: RunnableConfig | None = None) -> dict:
     from ai.workflows.support_workflow import run_support_workflow
     return await run_support_workflow(state=state, services=_get_services(config))
 
 
-async def run_personal_details_workflow_node(state: dict, config: dict = None) -> dict:
+async def run_personal_details_workflow_node(state: dict, config: RunnableConfig | None = None) -> dict:
     from ai.workflows.personal_details_workflow import run_personal_details_workflow
     return await run_personal_details_workflow(state=state, services=_get_services(config))
 
 
-async def run_unknown_workflow_node(state: dict, config: dict = None) -> dict:
+async def run_unknown_workflow_node(state: dict, config: RunnableConfig | None = None) -> dict:
     from ai.workflows.unknown_workflow import run_unknown_workflow
     return await run_unknown_workflow(state=state)
 
