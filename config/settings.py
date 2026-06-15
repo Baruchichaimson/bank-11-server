@@ -1,0 +1,47 @@
+import os
+from dotenv import load_dotenv
+
+load_dotenv()
+
+PORT = int(os.environ.get("PORT", 3000))
+MONGO_URI = os.environ.get("MONGO_URI", "mongodb://127.0.0.1:27017/bank-11")
+JWT_SECRET = os.environ.get("JWT_SECRET", "")
+NODE_ENV = os.environ.get("NODE_ENV", "development")
+IS_PRODUCTION = NODE_ENV == "production"
+
+MAIL_FROM = os.environ.get("MAIL_FROM", "")
+MAIL_FROM_NAME = os.environ.get("MAIL_FROM_NAME", "Bank One One")
+BREVO_API_KEY = os.environ.get("BREVO_API_KEY", "")
+APP_BASE_URL = os.environ.get("APP_BASE_URL", "")
+FRONTEND_BASE_URL = os.environ.get("FRONTEND_BASE_URL", "")
+
+OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "")
+OPENAI_MODEL = os.environ.get("OPENAI_MODEL", "gpt-4o-mini")
+OPENAI_BASE_URL = os.environ.get("OPENAI_BASE_URL", "")
+OPENAI_FALLBACK_MODEL = os.environ.get("OPENAI_FALLBACK_MODEL", "")
+
+OLLAMA_API_KEY = os.environ.get("OLLAMA_API_KEY", "")
+OLLAMA_BASE_URL = os.environ.get("OLLAMA_BASE_URL", "http://localhost:11434/v1")
+OLLAMA_MODEL = os.environ.get("OLLAMA_MODEL", "llama3.1")
+OLLAMA_FALLBACK_MODEL = os.environ.get("OLLAMA_FALLBACK_MODEL", "")
+
+GROQ_API_KEY = os.environ.get("GROQ_API_KEY", "")
+GROQ_BASE_URL = os.environ.get("GROQ_BASE_URL", "https://api.groq.com/openai/v1")
+GROQ_MODEL = os.environ.get("GROQ_MODEL", "llama-3.1-8b-instant")
+GROQ_FALLBACK_MODEL = os.environ.get("GROQ_FALLBACK_MODEL", "")
+
+AI_PROVIDER = os.environ.get("AI_PROVIDER", "openai").lower()
+
+CORS_ORIGINS = os.environ.get("CORS_ORIGINS", "")
+SOCKET_CORS_ORIGINS = os.environ.get("SOCKET_CORS_ORIGINS", "")
+
+ASSISTANT_DEBUG_ERRORS = os.environ.get("ASSISTANT_DEBUG_ERRORS", "false").lower() == "true"
+SOCKET_DEBUG = os.environ.get("SOCKET_DEBUG", "false").lower() == "true"
+BANKING_GRAPH_DEBUG = os.environ.get("BANKING_GRAPH_DEBUG", "false").lower() == "true"
+
+PENDING_REGISTRATION_CLEANUP_INTERVAL_MS = int(
+    os.environ.get("PENDING_REGISTRATION_CLEANUP_INTERVAL_MS", str(60 * 60 * 1000))
+)
+
+if not JWT_SECRET:
+    raise RuntimeError("Missing required environment variable: JWT_SECRET")
