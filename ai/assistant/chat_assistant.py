@@ -63,6 +63,9 @@ async def generate_assistant_reply(
             abort_signal=abort_signal,
         )
     except Exception as err:
+        import traceback
+        print(f"[assistant] graph error: {err!r}")
+        traceback.print_exc()
         fallback_reply = (
             "יש כרגע תקלה זמנית בעוזר. נסה שוב בעוד כמה שניות."
             if user_language == "he"
