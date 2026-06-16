@@ -194,8 +194,12 @@ def _normalize_final_semantic_query(*, user_input: str, final_parse: dict) -> di
 def _normalize_final_parse(*, user_input: str, final_parse: dict) -> dict:
     if not _is_transaction_count_question(user_input):
         return final_parse
+    # Exclude keys that are explicitly overridden below to avoid "multiple values" TypeError.
+    # In JS, {...obj, key: val} silently overwrites; in Python it raises.
+    overridden = {"domain", "intent", "confidence", "tool", "ambiguity"}
+    base = {k: v for k, v in final_parse.items() if k not in overridden}
     return create_intent_result(
-        **{**final_parse},
+        **base,
         domain="transactions",
         intent="recent_transactions",
         confidence=final_parse.get("confidence") or 0.95,

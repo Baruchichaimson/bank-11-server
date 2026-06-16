@@ -3,11 +3,11 @@ Flask application entry point — port of server.js.
 
 Run with:
     python app.py
-    flask run
-    gunicorn app:app
+    gunicorn app:socketio --worker-class eventlet --workers 1
 """
 
 import os
+import sys
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -70,13 +70,6 @@ def _connect_and_start_jobs():
     start_pending_registration_cleanup()
 
 
-def _run_with_socketio(flask_app):
-    from realtime.socket_server import init_socket_server
-    socketio = init_socket_server(flask_app, flask_app)
-    print(f"🚀 Flask-SocketIO server listening on 0.0.0.0:{PORT}")
-    socketio.run(flask_app, host="0.0.0.0", port=PORT, debug=not IS_PRODUCTION, use_reloader=False)
-
-
 # Connect to MongoDB and start background jobs on import.
 # Wrapped in a guard so that `from app import create_app` in tests does NOT
 # trigger a real MongoDB connection (tests set MONGO_URI to a local address
@@ -84,12 +77,20 @@ def _run_with_socketio(flask_app):
 if not os.environ.get("FLASK_TESTING"):
     _connect_and_start_jobs()
 
-# Module-level `app` exposed for gunicorn / flask CLI.
+# Module-level `app` and `socketio` — both exposed so gunicorn can use either:
+#   gunicorn app:socketio --worker-class eventlet --workers 1
+#   python app.py
 app = create_app()
 
+if not os.environ.get("FLASK_TESTING"):
+    from realtime.socket_server import init_socket_server
+    socketio = init_socket_server(app, app)
+    sys.stderr.write(f"[app] SocketIO initialised (pid={os.getpid()})\n")
+    sys.stderr.flush()
+else:
+    socketio = None
+
 if __name__ == "__main__":
-    try:
-        _run_with_socketio(app)
-    except Exception as e:
-        print(f"Flask-SocketIO startup failed ({e}); falling back to plain Flask server")
-        app.run(host="0.0.0.0", port=PORT, debug=not IS_PRODUCTION)
+    sys.stderr.write(f"[app] Starting Flask-SocketIO on 0.0.0.0:{PORT}\n")
+    sys.stderr.flush()
+    socketio.run(app, host="0.0.0.0", port=PORT, debug=not IS_PRODUCTION, use_reloader=False)
