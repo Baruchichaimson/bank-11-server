@@ -62,6 +62,7 @@ export const generateAssistantReply = async ({
       abortSignal
     });
   } catch (err) {
+    console.error('[chatAssistant] ERROR in runBankingGraph:', err);
     const fallbackReply = userLanguage === 'he'
       ? 'יש כרגע תקלה זמנית בעוזר. נסה שוב בעוד כמה שניות.'
       : 'The assistant is temporarily unavailable. Please try again in a few seconds.';
