@@ -173,9 +173,12 @@ def init_socket_server(app, flask_app) -> SocketIO:
     @socketio.on("chat_message")
     def on_chat_message(payload):
         import asyncio
+        import sys
         from flask import request as freq
         sid = freq.sid
         conn = _connection_state.get(sid)
+        sys.stderr.write(f"[socket] chat_message received sid={sid} conn={'yes' if conn else 'NO'}\n")
+        sys.stderr.flush()
         if not conn:
             return
 

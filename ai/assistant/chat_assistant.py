@@ -2,6 +2,7 @@
 Chat assistant — port of chatAssistant.js.
 """
 
+import sys
 import traceback
 
 from ai.assistant.openai_client import openai_client, OPENAI_MODEL, has_openai_key
@@ -65,8 +66,9 @@ async def generate_assistant_reply(
             abort_signal=abort_signal,
         )
     except Exception as err:
-        print(f"[chat_assistant] ERROR in run_banking_graph: {err}")
-        print(traceback.format_exc())
+        sys.stderr.write(f"[chat_assistant] ERROR in run_banking_graph: {err}\n")
+        sys.stderr.write(traceback.format_exc())
+        sys.stderr.flush()
         fallback_reply = (
             "יש כרגע תקלה זמנית בעוזר. נסה שוב בעוד כמה שניות."
             if user_language == "he"
