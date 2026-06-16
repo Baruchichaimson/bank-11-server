@@ -14,7 +14,6 @@ from ai.assistant.shared import MAX_HISTORY, detect_language, create_reply_paylo
 async def _create_chat_completion(payload: dict):
     """Async wrapper around the OpenAI (compatible) chat completion call."""
     kwargs = {k: v for k, v in payload.items() if k not in ("abortSignal",)}
-    loop_kwargs = {}
     if "model" not in kwargs:
         kwargs["model"] = OPENAI_MODEL
     return await _run_in_executor(openai_client.chat.completions.create, **kwargs)
