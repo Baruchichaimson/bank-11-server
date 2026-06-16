@@ -4,7 +4,13 @@ LLM semantic parser — port of llmSemanticParser.js.
 
 import json
 import re
-from ai.intents.semantic_catalog import ALLOWED_DOMAINS, ALLOWED_INTENTS, ALLOWED_TOOL_NAMES, TOOL_BY_NAME, ALLOWED_AGGREGATIONS
+import sys
+from ai.intents.semantic_catalog import (
+    ALLOWED_DOMAINS, ALLOWED_INTENTS, ALLOWED_TOOL_NAMES, TOOL_BY_NAME,
+    ALLOWED_AGGREGATIONS, ALLOWED_ACTIONS, ALLOWED_TYPES, ALLOWED_DIRECTIONS,
+    ALLOWED_TIME_RANGES, ACTION_TO_TYPE, TYPE_TO_ACTION,
+    format_response_contract_for_prompt, format_semantic_catalog_for_prompt,
+)
 from ai.intents.llm_prompt_payload_builder import build_user_prompt_payload, get_current_date_for_prompt
 from ai.contracts.intent_result_contract import create_intent_result, create_ambiguous_intent
 
@@ -74,17 +80,141 @@ def _normalize_tool_name(value) -> str | None:
     return normalized if normalized in ALLOWED_TOOL_NAMES_SET else None
 
 
+def _normalize_nullable(value):
+    if value is None or (isinstance(value, str) and value.strip().lower() in ("null", "none", "")):
+        return None
+    return value
+
+
+def _normalize_string_field(value) -> str | None:
+    v = _normalize_nullable(value)
+    if not isinstance(v, str):
+        return None
+    s = v.strip()
+    return s if s else None
+
+
+def _clamp_limit(value) -> int | None:
+    if value is None:
+        return None
+    try:
+        n = int(value)
+    except (TypeError, ValueError):
+        return None
+    if n <= 0 or n > 100:
+        return None
+    return n
+
+
+_ISO_DATE_RE = re.compile(r"^(\d{4})-(\d{2})-(\d{2})$")
+_ALLOWED_ACTIONS_SET = {a for a in ALLOWED_ACTIONS if a is not None}
+_ALLOWED_TYPES_SET = {t for t in ALLOWED_TYPES if t is not None}
+_ALLOWED_DIRECTIONS_SET = {d for d in ALLOWED_DIRECTIONS if d is not None}
+_ALLOWED_TIME_RANGES_SET = set(ALLOWED_TIME_RANGES)
+_ALLOWED_AGGREGATIONS_SET = set(ALLOWED_AGGREGATIONS)
+_ALLOWED_SORT_DIRS = {"asc", "desc"}
+
+
+def _normalize_iso_date(value) -> str | None:
+    text = _normalize_string_field(value)
+    if not text:
+        return None
+    m = _ISO_DATE_RE.match(text)
+    if not m:
+        return None
+    try:
+        from datetime import datetime
+        datetime(int(m.group(1)), int(m.group(2)), int(m.group(3)))
+    except ValueError:
+        return None
+    return text
+
+
+def _has_date_range_input(date_range) -> bool:
+    return bool(
+        date_range
+        and isinstance(date_range, dict)
+        and not isinstance(date_range, list)
+        and (date_range.get("from") or date_range.get("to"))
+    )
+
+
+def _validate_date_range(date_range) -> dict | None:
+    if not _has_date_range_input(date_range):
+        return None
+    from_val = _normalize_iso_date(date_range.get("from"))
+    to_val = _normalize_iso_date(date_range.get("to"))
+    if (date_range.get("from") and not from_val) or (date_range.get("to") and not to_val):
+        return None
+    if not from_val and not to_val:
+        return None
+    if from_val and to_val and from_val > to_val:
+        return None
+    return {"from": from_val, "to": to_val}
+
+
+def _normalize_action_and_type(*, action, type_val):
+    action = _normalize_nullable(action)
+    type_val = _normalize_nullable(type_val)
+    action = action if action in _ALLOWED_ACTIONS_SET else None
+    type_val = type_val if type_val in _ALLOWED_TYPES_SET else None
+    if action:
+        type_val = ACTION_TO_TYPE.get(action)
+    elif type_val:
+        action = TYPE_TO_ACTION.get(type_val)
+    return action, type_val
+
+
 def _validate_semantic_query(raw) -> dict | None:
     if not raw or not isinstance(raw, dict):
         return None
-    domain = raw.get("domain")
-    intent = raw.get("intent")
-    if domain != "transactions" or intent != "transactions_query":
+    if raw.get("domain") != "transactions" or raw.get("intent") != "transactions_query":
         return None
-    aggregation = raw.get("aggregation")
-    if aggregation not in ALLOWED_AGGREGATIONS:
+
+    action, type_val = _normalize_action_and_type(
+        action=raw.get("action"),
+        type_val=(raw.get("filters") or {}).get("type"),
+    )
+    raw_direction = _normalize_nullable((raw.get("filters") or {}).get("direction"))
+    direction = raw_direction if raw_direction in _ALLOWED_DIRECTIONS_SET else None
+
+    raw_time_range = _normalize_nullable(raw.get("timeRange"))
+    time_range = raw_time_range if raw_time_range in _ALLOWED_TIME_RANGES_SET else None
+
+    date_range = _validate_date_range(raw.get("dateRange"))
+    if _has_date_range_input(raw.get("dateRange")) and not date_range:
         return None
-    return raw
+
+    raw_agg = raw.get("aggregation")
+    aggregation = raw_agg if raw_agg in _ALLOWED_AGGREGATIONS_SET else "list"
+
+    raw_sort = _normalize_nullable(raw.get("sortDirection"))
+    sort_direction = raw_sort if raw_sort in _ALLOWED_SORT_DIRS else None
+
+    recipient_name = _normalize_string_field(raw.get("recipientName"))
+    if aggregation == "counterparty" and not recipient_name:
+        return None
+
+    filters = {"type": type_val}
+    if direction:
+        filters["direction"] = direction
+
+    result = {
+        "domain": "transactions",
+        "intent": "transactions_query",
+        "action": action,
+        "filters": filters,
+        "timeRange": None if date_range else time_range,
+        "aggregation": aggregation,
+        "limit": None if aggregation == "count" else _clamp_limit(raw.get("limit")),
+    }
+    if date_range:
+        result["dateRange"] = date_range
+    if sort_direction:
+        result["sortDirection"] = sort_direction
+    if recipient_name:
+        result["recipientName"] = recipient_name
+    return result
 
 
 def _build_legacy_semantic_query_from_tool(tool_name: str, tool_args: dict) -> dict | None:
@@ -182,7 +312,6 @@ def validate_llm_semantic_parse(payload: dict | None) -> dict | None:
 
 
 def build_semantic_parser_prompt() -> str:
-    from ai.intents.llm_prompt_payload_builder import get_current_date_for_prompt
     current_date = get_current_date_for_prompt()
     return f"""
 You are a conversation-aware semantic banking intent classifier.
@@ -193,37 +322,69 @@ Use recent conversation context only to resolve short follow-up messages.
 
 Return ONLY valid JSON. No markdown. No explanations. No comments.
 
-Response contract: domains={ALLOWED_DOMAINS}, intents={ALLOWED_INTENTS}
+Response contract:
+{format_response_contract_for_prompt()}
+
+Semantic intent contract:
+{format_semantic_catalog_for_prompt()}
 
 Core routing:
 - classify by the meaning of the requested action, not by keyword overlap.
-- balance/current money => domain account, intent check_balance
-- past activity/history/list/count/filter existing transactions => domain transactions, intent recent_transactions
-- starting/confirming/correcting/canceling a new transfer => domain transactions, intent transfer_money
-- stored user identity/profile details => domain profile, intent show_personal_details
-- representative/support/video call => domain support, intent contact_support
-- Hebrew: "תתקשר לנציג", "אני רוצה לדבר עם נציג" => domain support, intent contact_support
-- unsupported, casual, or ambiguous input => domain unknown, intent unknown
+- Prefer semantic intent/query fields over toolName.
+- balance/current money => domain account, intent check_balance, semanticQuery null, toolName null.
+- past activity/history/list/count/filter existing transactions => domain transactions, intent recent_transactions.
+- starting/confirming/correcting/canceling a new transfer => domain transactions, intent transfer_money.
+- stored user identity/profile details => domain profile, intent show_personal_details.
+- representative/support/video call => domain support, intent contact_support.
+- Hebrew requests like "תתקשר לנציג", "אני רוצה לדבר עם נציג", "תחבר אותי לנציג", or "שיחת וידאו עם נציג" => domain support, intent contact_support.
+- unsupported, casual, or ambiguous input => domain unknown, intent unknown, toolName null.
+- toolName is legacy compatibility. Use it only for UI actions or legacy payloads; do not use toolName as the primary way to request banking data.
 
 Transaction history parameter extraction:
-- Always return semanticQuery for recent_transactions
-- semanticQuery.domain="transactions", semanticQuery.intent="transactions_query"
-- Questions asking how many/count => aggregation="count", limit=null
-- Questions asking for N rows => aggregation="first_n", limit=N
-- Questions asking to show/list => aggregation="list"
-- Transfer history: action="transfer_money", filters.type="transfer"
-- Sent transfers: filters.direction="outgoing"; received: filters.direction="incoming"
-- Date extraction: dateRange as {{"from":"YYYY-MM-DD","to":"YYYY-MM-DD"}} using currentDate={current_date}
-- חודש שעבר/last month => previous full calendar month
-- החודש/this month => first day of current month through currentDate
+- Always return semanticQuery for recent_transactions.
+- Use semanticQuery.domain="transactions" and semanticQuery.intent="transactions_query".
+- Transfer history means action="transfer_money" and filters.type="transfer".
+- For transfers the user sent/performed ("שביצעתי", "ששלחתי", "שלחתי"), set filters.direction="outgoing".
+- For transfers the user received ("שקיבלתי", "קיבלתי", "נכנסות"), set filters.direction="incoming".
+- For all transfers ("כל ההעברות"), omit filters.direction or set filters.direction="all".
+- Generic activity/transactions without a specific type means action=null and filters.type=null.
+- Questions asking how many/count => aggregation="count", limit=null.
+- Questions asking for a specific number of rows => aggregation="first_n", limit=<number>.
+- Questions asking to show/list without a specific number => aggregation="list".
+- Singular latest/earliest requests like "מה ההעברה האחרונה שביצעתי?" or "latest transfer" => aggregation="first_n", limit=1.
+- Preserve explicit numeric limits. Convert Hebrew and English number words: שני/שתי/שתיים=2, שלוש/שלושה=3, ארבע/ארבעה=4, חמש/חמישה=5, שש/ששה=6, שבע/שבעה=7, שמונה=8, תשע/תשעה=9, עשר/עשרה=10, עשרים=20, עשרים וחמש=25.
+- אחרונות/האחרונות/אחרונים/latest/newest/most recent => sortDirection="desc".
+- ראשונות/הראשונות/ראשונים/first/earliest/oldest => sortDirection="asc".
+- If the user asks for N latest/earliest rows, use aggregation="first_n", limit=N, and the matching sortDirection.
+
+Date extraction:
+- Return semanticQuery.dateRange as {{"from":"YYYY-MM-DD","to":"YYYY-MM-DD"}} when the user specifies a date or relative period.
+- Use the currentDate field from the user payload for all relative dates.
+- חודש שעבר / חודש קודם / החודש שעבר / החודש הקודם / last month / previous month => full previous calendar month.
+- If currentDate is {current_date}, previous month is the full calendar month before that date.
+- החודש / חודש נוכחי / this month => from the first day of the current month through currentDate.
+- השבוע / this week => current calendar week through currentDate.
+- השבוע האחרון / מהשבוע האחרון / past week => the last 7 days through currentDate.
+- השנה / this year => from January 1 through currentDate.
+- Keep semanticQuery.timeRange=null. Never return database filters, createdAt, or Date objects.
+
+Examples:
+- User: "תתקשר לנציג"
+  JSON: {{"domain":"support","intent":"contact_support","confidence":0.95,"semanticQuery":null,"toolName":null}}
+- User: "אני רוצה לדבר עם נציג"
+  JSON: {{"domain":"support","intent":"contact_support","confidence":0.95,"semanticQuery":null,"toolName":null}}
+- User: "מה הם 2 העברות האחרונות שביצעתי?"
+  JSON: {{"domain":"transactions","intent":"recent_transactions","confidence":0.95,"semanticQuery":{{"domain":"transactions","intent":"transactions_query","action":"transfer_money","filters":{{"type":"transfer","direction":"outgoing"}},"timeRange":null,"aggregation":"first_n","limit":2,"sortDirection":"desc"}}}}
+- User: "תראה לי את ההעברות שקיבלתי החודש"
+  JSON: {{"domain":"transactions","intent":"recent_transactions","confidence":0.95,"semanticQuery":{{"domain":"transactions","intent":"transactions_query","action":"transfer_money","filters":{{"type":"transfer","direction":"incoming"}},"timeRange":null,"dateRange":{{"from":"YYYY-MM-01","to":"currentDate"}},"aggregation":"list","limit":null,"sortDirection":"desc"}}}}
+- User: "תראה לי 3 העברות מהשבוע האחרון"
+  JSON: {{"domain":"transactions","intent":"recent_transactions","confidence":0.95,"semanticQuery":{{"domain":"transactions","intent":"transactions_query","action":"transfer_money","filters":{{"type":"transfer"}},"timeRange":null,"dateRange":{{"from":"currentDate minus 6 days","to":"currentDate"}},"aggregation":"first_n","limit":3,"sortDirection":"desc"}}}}
 
 Safety and confidence:
-- Extract only values explicitly present or clearly implied
-- Never invent transfer recipient, amount, description, dates, or confirmation
-- If confidence < 0.65, return unknown
-- If ambiguous, set isAmbiguous=true
-
-Return valid JSON only.
+- Extract only values explicitly present or clearly implied by the current message/context.
+- Never invent transfer recipient, amount, description, dates, or confirmation.
+- If confidence is below 0.65, return unknown.
+- If ambiguous between workflows, set isAmbiguous=true, give a short ambiguityReason, and return unknown/unknown.
 """.strip()
 
 
@@ -251,9 +412,11 @@ async def parse_query_with_llm(*, user_input: str, history: list, create_chat_co
         parsed = json.loads(raw_content.strip())
         validated = validate_llm_semantic_parse(parsed)
         if not validated:
-            print(f"[LLM Parser] Validation failed for: {raw_content[:200]}")
+            sys.stderr.write(f"[LLM Parser] Validation failed for: {raw_content[:200]}\n")
+            sys.stderr.flush()
             return None
         return validated
     except Exception as err:
-        print(f"[LLM Parser] Error: {err}")
+        sys.stderr.write(f"[LLM Parser] Error: {err}\n")
+        sys.stderr.flush()
         return None
