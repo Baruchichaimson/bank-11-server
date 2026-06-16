@@ -172,13 +172,11 @@ def init_socket_server(app, flask_app) -> SocketIO:
 
     @socketio.on("chat_message")
     def on_chat_message(payload):
-        import asyncio, sys
+        import asyncio
         from flask import request as freq
         sid = freq.sid
-        print(f"[socket] chat_message received sid={sid}", flush=True, file=sys.stderr)
         conn = _connection_state.get(sid)
         if not conn:
-            print(f"[socket] no conn for sid={sid}", flush=True, file=sys.stderr)
             return
 
         payload = payload or {}
@@ -246,18 +244,7 @@ def init_socket_server(app, flask_app) -> SocketIO:
             finally:
                 conn["active_requests"].pop(request_id, None)
 
-        def _run_task():
-            import sys
-            print("[socket] background task started", flush=True)
-            try:
-                asyncio.run(_run())
-                print("[socket] background task finished ok", flush=True)
-            except Exception as bg_err:
-                print(f"[socket] asyncio.run FAILED: {bg_err!r}", flush=True, file=sys.stderr)
-                import traceback
-                traceback.print_exc(file=sys.stderr)
-
-        socketio.start_background_task(_run_task)
+        socketio.start_background_task(lambda: asyncio.run(_run()))
 
     @socketio.on("cancel_chat_message")
     def on_cancel_chat_message(payload):
