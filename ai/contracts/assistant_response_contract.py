@@ -1,3 +1,6 @@
+from ai.shared.json_safe import make_json_safe
+
+
 def _is_plain_object(value) -> bool:
     return value is not None and isinstance(value, dict)
 
@@ -13,9 +16,9 @@ def _normalize_action(action):
     payload = action.get("payload")
     rest = {k: v for k, v in action.items() if k not in ("type", "payload")}
     if _is_plain_object(payload):
-        normalized["payload"] = payload
+        normalized["payload"] = make_json_safe(payload)
     elif rest:
-        normalized["payload"] = rest
+        normalized["payload"] = make_json_safe(rest)
     return normalized
 
 
@@ -24,7 +27,7 @@ def _normalize_execution(execution: dict) -> dict:
     return {
         "executed": bool(execution.get("executed")),
         "operation": execution.get("operation"),
-        "result": execution.get("result") if _is_plain_object(execution.get("result")) else None,
+        "result": make_json_safe(execution.get("result")) if _is_plain_object(execution.get("result")) else None,
     }
 
 
@@ -44,7 +47,7 @@ def create_workflow_response(
     return {
         "message": str(message or ""),
         "action": _normalize_action(action),
-        "nextConversationState": next_conversation_state if _is_plain_object(next_conversation_state) else None,
+        "nextConversationState": make_json_safe(next_conversation_state) if _is_plain_object(next_conversation_state) else None,
         "execution": _normalize_execution(execution or {}),
     }
 

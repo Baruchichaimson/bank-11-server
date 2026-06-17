@@ -90,7 +90,7 @@ Field names and indexes are preserved for full MongoDB data compatibility.
 
 | Node.js | Python |
 |---|---|
-| `socket/socketServer.js` | `realtime/socket_server.py` (Flask-SocketIO) |
+| `socket/socketServer.js` | `realtime/socket_server.py` (python-socketio ASGI) |
 
 ---
 
@@ -117,14 +117,12 @@ confirmed working in production.
 **JS:** Node.js `AbortController` / `AbortSignal` allows true mid-stream  
 cancellation of an in-flight LLM call.
 
-**Python:** Flask-SocketIO (eventlet) is synchronous. Cancellation is  
-implemented as a "discard result" flag: the background task finishes, but if  
-`cancelled=True` the result is silently dropped and no event is emitted.  
-True mid-stream cancellation is not possible without streaming + generators.
+**Python:** `python-socketio.AsyncServer` runs on the ASGI event loop. Chatbot  
+work is stored as an `asyncio.Task` per `requestId`, and `cancel_chat_message`  
+calls `task.cancel()` so in-flight async LLM calls can be canceled.
 
-**Action required:** If mid-stream cancellation UX matters, consider  
-switching to `gevent` async mode with streaming or use an independent async  
-worker (e.g. Celery + Redis) for LLM calls.
+**Action required:** Deploy with an ASGI server such as uvicorn, or gunicorn  
+with `uvicorn.workers.UvicornWorker`.
 
 ### 2. MongoDB Transactions (Atomicity)
 
@@ -148,7 +146,7 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 COPY . .
-CMD ["gunicorn", "app:app", "--bind", "0.0.0.0:3000", "--workers", "2", "--worker-class", "eventlet"]
+CMD ["gunicorn", "app:asgi_app", "--bind", "0.0.0.0:3000", "--workers", "2", "-k", "uvicorn.workers.UvicornWorker"]
 ```
 
 ### 4. Password Reset HTML Pages

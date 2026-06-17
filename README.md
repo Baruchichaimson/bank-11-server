@@ -53,15 +53,14 @@ See `.env.example` for the full list with descriptions.
 ## Run the Server
 
 ```bash
-# Option A — direct Python
+# Option A — direct Python (starts uvicorn)
 python app.py
 
-# Option B — Flask CLI
-export FLASK_APP=app
-flask run --host=0.0.0.0 --port=3000
+# Option B — uvicorn
+uvicorn app:asgi_app --host 0.0.0.0 --port 3000
 
-# Option C — Gunicorn (production)
-gunicorn app:app --bind 0.0.0.0:3000 --workers 2 --worker-class eventlet
+# Option C — Gunicorn with an ASGI worker (production)
+gunicorn app:asgi_app --bind 0.0.0.0:3000 --workers 2 -k uvicorn.workers.UvicornWorker
 ```
 
 ---

@@ -1,16 +1,11 @@
 """
-Flask application entry point — port of server.js.
+Flask + ASGI application entry point — port of server.js.
 
 Run with:
     python app.py
-    gunicorn -k geventwebsocket.gunicorn.workers.GeventWebSocketWorker -w 1 --bind 0.0.0.0:$PORT app:app
+    uvicorn app:asgi_app --host 0.0.0.0 --port $PORT
+    gunicorn app:asgi_app --bind 0.0.0.0:$PORT -k uvicorn.workers.UvicornWorker
 """
-
-# gevent monkey-patch must come before ALL other imports so that stdlib
-# networking primitives (socket, threading, ssl) are replaced before any
-# library (pymongo, httpx, etc.) imports them.
-from gevent import monkey
-monkey.patch_all()
 
 import os
 import sys
@@ -21,7 +16,7 @@ load_dotenv()
 from flask import Flask
 from flask_cors import CORS
 
-from config.settings import PORT, IS_PRODUCTION
+from config.settings import PORT
 from config.cors_origins import get_allowed_origins
 from middleware.security_headers import apply_security_headers
 from middleware.rate_limit import init_limiter
@@ -36,7 +31,7 @@ def create_app(testing: bool = False) -> Flask:
     Application factory.
 
     Called by:
-    - module-level `app = create_app()` below  → gunicorn / flask run / python app.py
+    - module-level `flask_app = create_app()` below
     - tests/conftest.py                         → pytest
     """
     flask_app = Flask(__name__)
@@ -83,20 +78,18 @@ def _connect_and_start_jobs():
 if not os.environ.get("FLASK_TESTING"):
     _connect_and_start_jobs()
 
-# Module-level `app` — exposed so gunicorn can target it:
-#   gunicorn -k geventwebsocket.gunicorn.workers.GeventWebSocketWorker -w 1 app:app
-#   python app.py
-app = create_app()
+flask_app = create_app()
 
-if not os.environ.get("FLASK_TESTING"):
-    from realtime.socket_server import init_socket_server
-    socketio = init_socket_server(app, app)
-    sys.stderr.write(f"[app] SocketIO initialised (pid={os.getpid()})\n")
-    sys.stderr.flush()
-else:
-    socketio = None
+from realtime.socket_server import create_socket_asgi_app
+
+asgi_app = create_socket_asgi_app(flask_app)
+
+# Backwards-compatible WSGI name for Flask-only tooling/tests.
+app = flask_app
 
 if __name__ == "__main__":
-    sys.stderr.write(f"[app] Starting Flask-SocketIO on 0.0.0.0:{PORT}\n")
+    import uvicorn
+
+    sys.stderr.write(f"[app] Starting ASGI server on 0.0.0.0:{PORT}\n")
     sys.stderr.flush()
-    socketio.run(app, host="0.0.0.0", port=PORT, debug=not IS_PRODUCTION, use_reloader=False)
+    uvicorn.run(asgi_app, host="0.0.0.0", port=PORT)

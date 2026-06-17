@@ -8,46 +8,44 @@ USER_EMAIL = "socket-test@example.com"
 
 
 @pytest.fixture
-def socket_client(monkeypatch):
-    from app import create_app
-    from config.settings import JWT_SECRET
-    import jwt
+def async_socket_server(monkeypatch):
     import realtime.socket_server as socket_server
 
+    socket_server._connection_state.clear()
     socket_server._user_sockets.clear()
     socket_server._pending_calls.clear()
+    socket_server.async_sio = socket_server.create_async_socket_server()
 
-    monkeypatch.setattr(
-        socket_server,
-        "find_user_by_id",
-        lambda _user_id: {
-            "_id": USER_ID,
-            "email": USER_EMAIL,
-            "firstName": "Socket",
-            "isVerified": True,
-            "tokenVersion": 0,
-        },
-    )
+    sid = "test-sid"
+    socket_server._connection_state[sid] = {
+        "user": {"id": USER_ID, "email": USER_EMAIL, "firstName": "Socket"},
+        "history": [],
+        "active_requests": {},
+    }
 
-    flask_app = create_app(testing=True)
-    sio = socket_server.init_socket_server(flask_app, flask_app)
-    token = jwt.encode({"userId": USER_ID, "tokenVersion": 0}, JWT_SECRET, algorithm="HS256")
-    client = sio.test_client(flask_app, auth={"token": token})
-    assert client.is_connected()
-    client.get_received()
+    events = []
 
-    yield sio, client
+    async def fake_emit(event, data=None, to=None, **_kwargs):
+        events.append({"name": event, "args": [data], "to": to})
 
-    if client.is_connected():
-        client.disconnect()
+    monkeypatch.setattr(socket_server.async_sio, "emit", fake_emit)
+
+    yield socket_server, sid, events
+
+    conn = socket_server._connection_state.get(sid, {})
+    for request_state in list((conn.get("active_requests") or {}).values()):
+        task = request_state.get("task")
+        if task and not task.done():
+            task.cancel()
 
 
 def _event_names(events):
     return [event["name"] for event in events]
 
 
-def test_canceled_chat_request_does_not_emit_late_bot_reply(socket_client, monkeypatch):
-    sio, client = socket_client
+@pytest.mark.asyncio
+async def test_canceled_chat_request_does_not_emit_late_bot_reply(async_socket_server, monkeypatch):
+    socket_server, sid, events = async_socket_server
     import ai.assistant.chat_assistant as chat_assistant
 
     state = {"started": False, "cancelled": False}
@@ -69,31 +67,33 @@ def test_canceled_chat_request_does_not_emit_late_bot_reply(socket_client, monke
     monkeypatch.setattr(chat_assistant, "generate_assistant_reply", slow_reply)
 
     request_id = "cancel-me"
-    client.emit("chat_message", {"requestId": request_id, "message": "hello"})
+    chat_handler = socket_server.async_sio.handlers["/"]["chat_message"]
+    cancel_handler = socket_server.async_sio.handlers["/"]["cancel_chat_message"]
+
+    await chat_handler(sid, {"requestId": request_id, "message": "hello"})
     for _ in range(100):
         if state["started"]:
             break
-        sio.sleep(0.01)
+        await asyncio.sleep(0.01)
     assert state["started"] is True
 
-    client.get_received()
-    client.emit("cancel_chat_message", {"requestId": request_id})
-    sio.sleep(0.05)
+    events.clear()
+    await cancel_handler(sid, {"requestId": request_id})
+    await asyncio.sleep(0.05)
 
-    events = client.get_received()
-    assert {"name": "chat_canceled", "args": [{"requestId": request_id}], "namespace": "/"} in events
+    assert {"name": "chat_canceled", "args": [{"requestId": request_id}], "to": sid} in events
     assert "bot_reply" not in _event_names(events)
     assert "chat_error" not in _event_names(events)
 
-    sio.sleep(1.1)
-    late_events = client.get_received()
-    assert "bot_reply" not in _event_names(late_events)
-    assert "chat_error" not in _event_names(late_events)
+    await asyncio.sleep(1.1)
+    assert "bot_reply" not in _event_names(events)
+    assert "chat_error" not in _event_names(events)
     assert state["cancelled"] is True
 
 
-def test_cancelled_error_from_assistant_is_not_chat_error(socket_client, monkeypatch):
-    sio, client = socket_client
+@pytest.mark.asyncio
+async def test_cancelled_error_from_assistant_is_not_chat_error(async_socket_server, monkeypatch):
+    socket_server, sid, events = async_socket_server
     import ai.assistant.chat_assistant as chat_assistant
 
     async def cancelled_reply(**_kwargs):
@@ -101,9 +101,9 @@ def test_cancelled_error_from_assistant_is_not_chat_error(socket_client, monkeyp
 
     monkeypatch.setattr(chat_assistant, "generate_assistant_reply", cancelled_reply)
 
-    client.emit("chat_message", {"requestId": "raises-cancelled", "message": "hello"})
-    sio.sleep(0.05)
+    chat_handler = socket_server.async_sio.handlers["/"]["chat_message"]
+    await chat_handler(sid, {"requestId": "raises-cancelled", "message": "hello"})
+    await asyncio.sleep(0.05)
 
-    events = client.get_received()
     assert "bot_reply" not in _event_names(events)
     assert "chat_error" not in _event_names(events)

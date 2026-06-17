@@ -11,6 +11,7 @@ from ai.graph.workflow_router import route_workflow
 from ai.intents.detect_intent import detect_intent
 from ai.contracts.assistant_response_contract import normalize_workflow_response
 from ai.assistant.shared import detect_language, create_reply_payload
+from ai.shared.json_safe import make_json_safe
 from config.settings import BANKING_GRAPH_DEBUG
 
 
@@ -32,14 +33,14 @@ def _to_client_action(action):
 
 
 async def user_request_node(state: dict) -> dict:
-    return {
+    return make_json_safe({
         **state,
         "workflow": {**(state.get("workflow") or {}), "currentPhase": "User Request"},
         "audit": {
             **(state.get("audit") or {}),
             "transitions": [*((state.get("audit") or {}).get("transitions") or []), "User Request"],
         },
-    }
+    })
 
 
 async def find_intent_node(state: dict, config: RunnableConfig | None = None) -> dict:
@@ -54,14 +55,14 @@ async def find_intent_node(state: dict, config: RunnableConfig | None = None) ->
     detection["detectedIntent"] = detection["intent"]
     _debug("BANKING GRAPH DETECTED INTENT", detection.get("intent"), detection.get("source"))
 
-    return {
+    return make_json_safe({
         **state,
         "intent": detection,
         "audit": {
             **(state.get("audit") or {}),
             "transitions": [*((state.get("audit") or {}).get("transitions") or []), f"Intent: {detection['intent']}"],
         },
-    }
+    })
 
 
 async def workflow_router_node(state: dict) -> dict:
@@ -71,7 +72,7 @@ async def workflow_router_node(state: dict) -> dict:
         domain=intent.get("domain"),
     )
     _debug("BANKING GRAPH SELECTED WORKFLOW", workflow)
-    return {
+    return make_json_safe({
         **state,
         "workflow": {
             **(state.get("workflow") or {}),
@@ -82,7 +83,7 @@ async def workflow_router_node(state: dict) -> dict:
             **(state.get("audit") or {}),
             "transitions": [*((state.get("audit") or {}).get("transitions") or []), f"Workflow: {workflow}"],
         },
-    }
+    })
 
 
 def _get_services(config):
@@ -91,41 +92,41 @@ def _get_services(config):
 
 async def run_transfer_workflow_node(state: dict, config: RunnableConfig | None = None) -> dict:
     from ai.workflows.transfer.transfer_state_machine import run_transfer_node
-    return await run_transfer_node(state=state, config=config)
+    return make_json_safe(await run_transfer_node(state=state, config=config))
 
 
 async def run_transactions_workflow_node(state: dict, config: RunnableConfig | None = None) -> dict:
     from ai.workflows.transactions_workflow import run_transactions_workflow
-    return await run_transactions_workflow(state=state, services=_get_services(config))
+    return make_json_safe(await run_transactions_workflow(state=state, services=_get_services(config)))
 
 
 async def run_balance_workflow_node(state: dict, config: RunnableConfig | None = None) -> dict:
     from ai.workflows.balance_workflow import run_balance_workflow
-    return await run_balance_workflow(state=state, services=_get_services(config))
+    return make_json_safe(await run_balance_workflow(state=state, services=_get_services(config)))
 
 
 async def run_support_workflow_node(state: dict, config: RunnableConfig | None = None) -> dict:
     from ai.workflows.support_workflow import run_support_workflow
-    return await run_support_workflow(state=state, services=_get_services(config))
+    return make_json_safe(await run_support_workflow(state=state, services=_get_services(config)))
 
 
 async def run_personal_details_workflow_node(state: dict, config: RunnableConfig | None = None) -> dict:
     from ai.workflows.personal_details_workflow import run_personal_details_workflow
-    return await run_personal_details_workflow(state=state, services=_get_services(config))
+    return make_json_safe(await run_personal_details_workflow(state=state, services=_get_services(config)))
 
 
 async def run_unknown_workflow_node(state: dict, config: RunnableConfig | None = None) -> dict:
     from ai.workflows.unknown_workflow import run_unknown_workflow
-    return await run_unknown_workflow(state=state)
+    return make_json_safe(await run_unknown_workflow(state=state))
 
 
 async def return_response_node(state: dict) -> dict:
     workflow_response = normalize_workflow_response(state.get("workflowResponse") or state)
-    return {
+    return make_json_safe({
         **state,
         "workflow": {**(state.get("workflow") or {}), "currentPhase": "Return Response"},
         "workflowResponse": workflow_response,
-    }
+    })
 
 
 def _route_to_workflow(state: dict) -> str:
@@ -200,7 +201,7 @@ async def run_banking_graph(
 
     if is_resuming:
         final_state = await banking_graph.ainvoke(
-            Command(resume={"userInput": user_input, "transferPayload": transfer_payload}),
+            Command(resume=make_json_safe({"userInput": user_input, "transferPayload": transfer_payload})),
             config=config,
         )
     else:
@@ -213,7 +214,7 @@ async def run_banking_graph(
             user_language=user_language,
             transfer_payload=transfer_payload,
         )
-        final_state = await banking_graph.ainvoke(initial_state, config=config)
+        final_state = await banking_graph.ainvoke(make_json_safe(initial_state), config=config)
 
     # Check if the graph paused at a new interrupt (transfer is still in progress)
     updated = await banking_graph.aget_state(config)
