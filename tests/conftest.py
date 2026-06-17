@@ -13,6 +13,10 @@ os.environ.setdefault("JWT_SECRET", "test-secret-key-for-pytest")
 os.environ.setdefault("MONGO_URI", "mongodb://localhost:27017/bank-test")
 # Tell app.py NOT to connect to MongoDB or start background jobs on import.
 os.environ["FLASK_TESTING"] = "1"
+# Tests must not depend on external observability credentials or network access.
+os.environ["LANGFUSE_ENABLED"] = "false"
+os.environ["LANGFUSE_CAPTURE_IO"] = "false"
+os.environ["ASSISTANT_TRACE_LOGS"] = "false"
 
 
 def _mock_db():

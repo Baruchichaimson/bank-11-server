@@ -6,17 +6,28 @@ import asyncio
 import sys
 import traceback
 
-from ai.assistant.openai_client import openai_client, OPENAI_MODEL, has_openai_key
+from ai.assistant.openai_client import IS_LANGFUSE_OPENAI_CLIENT, openai_client, OPENAI_MODEL, has_openai_key
 from ai.graph.banking_graph import run_banking_graph
 from ai.services.business_services import create_business_services
 from ai.assistant.shared import MAX_HISTORY, detect_language, create_reply_payload
+from observability.langfuse_tracing import get_langfuse_openai_kwargs
 
 
 async def _create_chat_completion(payload: dict):
     """Async wrapper around the OpenAI (compatible) chat completion call."""
-    kwargs = {k: v for k, v in payload.items() if k not in ("abortSignal",)}
+    metadata = dict(payload.get("metadata") or {})
+    kwargs = {k: v for k, v in payload.items() if k not in ("abortSignal", "metadata", "langfuse_name")}
     if "model" not in kwargs:
         kwargs["model"] = OPENAI_MODEL
+    if IS_LANGFUSE_OPENAI_CLIENT:
+        kwargs.update(get_langfuse_openai_kwargs(
+            name=payload.get("langfuse_name") or "chat_completion",
+            metadata={
+                "provider": "openai-compatible",
+                "response_format": kwargs.get("response_format"),
+                **metadata,
+            },
+        ))
     return await openai_client.chat.completions.create(**kwargs)
 
 

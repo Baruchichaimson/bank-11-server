@@ -4,11 +4,13 @@ Implements the same phases: idle, form_open, await_confirmation.
 """
 
 import re
+import time
 from langchain_core.runnables import RunnableConfig
 from langgraph.graph import StateGraph, START, END
 from typing_extensions import TypedDict
 from typing import Any, Optional
 from ai.contracts.assistant_response_contract import create_executed_workflow_response, create_workflow_response
+from observability.langfuse_tracing import get_request_id, start_span, trace_log
 
 TRANSFER_PHASE_IDLE = "idle"
 TRANSFER_PHASE_FORM_OPEN = "form_open"
@@ -304,6 +306,8 @@ async def run_transfer_node(state: dict, config: RunnableConfig | None = None) -
     configurable = (config or {}).get("configurable") or {}
     services = configurable.get("services")
     create_chat_completion = configurable.get("createChatCompletion")
+    workflow_start = time.perf_counter()
+    workflow_span = start_span(name="transfer_workflow", metadata={"workflow_name": "transfer_workflow"})
 
     session = state.get("session") or {}
     user_language = session.get("userLanguage", "en")
@@ -318,9 +322,39 @@ async def run_transfer_node(state: dict, config: RunnableConfig | None = None) -
 
     # ── Inline helpers ─────────────────────────────────────────────────────
 
+    def _missing_fields():
+        return [
+            field for field, is_missing in (
+                ("receiverEmail", not receiver_email),
+                ("amount", amount is None),
+            )
+            if is_missing
+        ]
+
+    def _action_type(action):
+        return action.get("type") if isinstance(action, dict) else action
+
+    def _finish(result_state: dict, **summary):
+        ms = (time.perf_counter() - workflow_start) * 1000
+        workflow_response = result_state.get("workflowResponse") or {}
+        action = workflow_response.get("action")
+        execution = workflow_response.get("execution") or {}
+        output = {
+            "workflow_name": "transfer_workflow",
+            "phase": (result_state.get("transfer") or {}).get("phase") or transfer.get("phase"),
+            "missing_fields": _missing_fields(),
+            "action_type": _action_type(action),
+            "operation": execution.get("operation"),
+            "duration_ms": ms,
+            **summary,
+        }
+        workflow_span.end(output=output, metadata=output)
+        trace_log(f"workflow requestId={get_request_id()} name=transfer_workflow ms={ms:.1f}")
+        return result_state
+
     def _cancel():
         msg = "ביטלתי את תהליך ההעברה." if flow_language == "he" else "I canceled the transfer flow."
-        return {
+        return _finish({
             **state,
             "workflowResponse": create_workflow_response(
                 message=msg,
@@ -329,22 +363,22 @@ async def run_transfer_node(state: dict, config: RunnableConfig | None = None) -
                 execution={"executed": False, "operation": "transfer_money", "result": None},
             ),
             "transfer": {**(state.get("transfer") or {}), **RESET_TRANSFER_FLOW},
-        }
+        }, result_status="cancelled")
 
     def _error(msg):
-        return {
+        return _finish({
             **state,
             "workflowResponse": create_workflow_response(
                 message=msg, action=None, next_conversation_state=None,
                 execution={"executed": False, "operation": "transfer_money", "result": None},
             ),
             "transfer": {**(state.get("transfer") or {}), **RESET_TRANSFER_FLOW},
-        }
+        }, result_status="error")
 
     def _form_error(field, msg):
         safe_email = "" if field == "receiverEmail" else receiver_email
         safe_amount = None if field == "amount" else amount
-        return {
+        return _finish({
             **state,
             "workflowResponse": create_workflow_response(
                 message="",
@@ -365,7 +399,7 @@ async def run_transfer_node(state: dict, config: RunnableConfig | None = None) -
                 "amount": safe_amount,
                 "nextTransferState": {"phase": TRANSFER_PHASE_FORM_OPEN, "flowLanguage": flow_language},
             },
-        }
+        }, result_status="form_error", error_field=field)
 
     async def _parse(user_input, payload, phase):
         return await get_semantic_transfer_payload(
@@ -603,9 +637,9 @@ async def run_transfer_node(state: dict, config: RunnableConfig | None = None) -
         result={"transaction": transaction, "suggestions": suggestions},
     )
 
-    return {
+    return _finish({
         **state,
         "workflowResponse": workflow_response,
         "execution": workflow_response["execution"],
         "transfer": {**(state.get("transfer") or {}), **RESET_TRANSFER_FLOW, "nextTransferState": None},
-    }
+    }, result_status="executed", suggestions_count=len(suggestions))

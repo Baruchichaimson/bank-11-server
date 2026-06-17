@@ -4,6 +4,15 @@ Intent detection — port of detectIntent.js.
 
 from ai.intents.llm_semantic_parser import parse_query_with_llm
 from ai.contracts.intent_result_contract import create_intent_result, create_unknown_intent, normalize_intent_result
+from observability.langfuse_tracing import (
+    duration_ms,
+    get_request_id,
+    now_ms,
+    start_span,
+    text_preview,
+    trace_log,
+    update_trace_fields,
+)
 
 _LLM_UNAVAILABLE = create_unknown_intent(source="llm_unavailable")
 _LLM_PARSE_FAILED = create_unknown_intent(source="llm_parse_failed")
@@ -16,18 +25,54 @@ async def detect_intent(
     create_chat_completion=None,
     abort_signal=None,
 ) -> dict:
-    parsed = await parse_query_with_llm(
-        user_input=user_input,
-        history=history or [],
-        create_chat_completion=create_chat_completion,
-        abort_signal=abort_signal,
+    start = now_ms()
+    span = start_span(
+        name="detect_intent",
+        input={"user_input": text_preview(user_input), "history_count": len(history or [])},
+        metadata={"create_chat_completion_present": bool(create_chat_completion)},
     )
-    final_parse = normalize_intent_result(
-        parsed or (_LLM_PARSE_FAILED if create_chat_completion else _LLM_UNAVAILABLE)
-    )
+    parsed = None
+    final_parse = None
+    try:
+        parsed = await parse_query_with_llm(
+            user_input=user_input,
+            history=history or [],
+            create_chat_completion=create_chat_completion,
+            abort_signal=abort_signal,
+        )
+        final_parse = normalize_intent_result(
+            parsed or (_LLM_PARSE_FAILED if create_chat_completion else _LLM_UNAVAILABLE)
+        )
 
-    return create_intent_result(
-        **{k: v for k, v in final_parse.items() if k not in ("semanticQuery", "source")},
-        source=final_parse.get("source", "safe_unknown"),
-        semantic_query=final_parse.get("semanticQuery"),
-    )
+        result = create_intent_result(
+            **{k: v for k, v in final_parse.items() if k not in ("semanticQuery", "source")},
+            source=final_parse.get("source", "safe_unknown"),
+            semantic_query=final_parse.get("semanticQuery"),
+        )
+        ms = duration_ms(start)
+        output = {
+            "parsed_domain": (parsed or {}).get("domain"),
+            "parsed_intent": (parsed or {}).get("intent"),
+            "parsed_confidence": (parsed or {}).get("confidence"),
+            "final_domain": result.get("domain"),
+            "final_intent": result.get("intent"),
+            "final_confidence": result.get("confidence"),
+            "final_source": result.get("source"),
+            "has_semantic_query": bool(result.get("semanticQuery")),
+            "duration_ms": ms,
+        }
+        span.end(output=output, metadata=output)
+        update_trace_fields(
+            selected_domain=result.get("domain"),
+            selected_intent=result.get("intent"),
+            intent_source=result.get("source"),
+            intent_confidence=result.get("confidence"),
+        )
+        trace_log(
+            f"detect_intent requestId={get_request_id()} ms={ms:.1f} "
+            f"domain={result.get('domain')} intent={result.get('intent')}"
+        )
+        return result
+    except Exception as err:
+        span.end(output={"error": str(err)}, metadata={"error": str(err)})
+        raise

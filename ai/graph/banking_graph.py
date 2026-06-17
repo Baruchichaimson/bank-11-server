@@ -6,6 +6,7 @@ Uses langgraph StateGraph with BankingState TypedDict.
 from langchain_core.runnables import RunnableConfig
 from langgraph.graph import StateGraph, START, END
 from langgraph.checkpoint.memory import MemorySaver
+import time
 from ai.graph.banking_state import BankingState, create_initial_banking_state
 from ai.graph.workflow_router import route_workflow
 from ai.intents.detect_intent import detect_intent
@@ -13,6 +14,13 @@ from ai.contracts.assistant_response_contract import normalize_workflow_response
 from ai.assistant.shared import detect_language, create_reply_payload
 from ai.shared.json_safe import make_json_safe
 from config.settings import BANKING_GRAPH_DEBUG
+from observability.langfuse_tracing import (
+    get_request_id,
+    start_span,
+    text_preview,
+    trace_log,
+    update_trace_fields,
+)
 
 
 def _debug(*args):
@@ -45,6 +53,11 @@ async def user_request_node(state: dict) -> dict:
 
 async def find_intent_node(state: dict, config: RunnableConfig | None = None) -> dict:
     configurable = (config or {}).get("configurable") or {}
+    span = start_span(
+        name="find_intent_node",
+        input={"userInput": text_preview(state.get("userInput", ""))},
+        metadata={"history_count": len(state.get("history") or [])},
+    )
 
     detection = await detect_intent(
         user_input=state.get("userInput", ""),
@@ -54,6 +67,14 @@ async def find_intent_node(state: dict, config: RunnableConfig | None = None) ->
     )
     detection["detectedIntent"] = detection["intent"]
     _debug("BANKING GRAPH DETECTED INTENT", detection.get("intent"), detection.get("source"))
+    output = {
+        "domain": detection.get("domain"),
+        "intent": detection.get("intent"),
+        "detectedIntent": detection.get("detectedIntent"),
+        "confidence": detection.get("confidence"),
+        "source": detection.get("source"),
+    }
+    span.end(output=output, metadata=output)
 
     return make_json_safe({
         **state,
@@ -67,11 +88,22 @@ async def find_intent_node(state: dict, config: RunnableConfig | None = None) ->
 
 async def workflow_router_node(state: dict) -> dict:
     intent = state.get("intent") or {}
+    before = {
+        "state.intent.domain": intent.get("domain"),
+        "state.intent.intent": intent.get("intent"),
+        "state.intent.detectedIntent": intent.get("detectedIntent"),
+        "state.intent.source": intent.get("source"),
+        "state.intent.confidence": intent.get("confidence"),
+    }
+    span = start_span(name="workflow_router_node", input=before, metadata=before)
     workflow = route_workflow(
         intent=intent.get("intent") or intent.get("detectedIntent") or "unknown",
         domain=intent.get("domain"),
     )
     _debug("BANKING GRAPH SELECTED WORKFLOW", workflow)
+    span.end(output={"selected_workflow": workflow}, metadata={**before, "selected_workflow": workflow})
+    update_trace_fields(selected_workflow=workflow)
+    trace_log(f"workflow_router requestId={get_request_id()} workflow={workflow}")
     return make_json_safe({
         **state,
         "workflow": {
@@ -90,34 +122,70 @@ def _get_services(config):
     return (config or {}).get("configurable", {}).get("services")
 
 
+async def _run_workflow_with_trace(*, workflow_name: str, func, state: dict, config: RunnableConfig | None = None, services=None):
+    start = time.perf_counter()
+    span = start_span(
+        name="workflow",
+        input={"workflow_name": workflow_name},
+        metadata={"workflow_name": workflow_name},
+    )
+    try:
+        if services is not None:
+            result = await func(state=state, services=services)
+        else:
+            result = await func(state=state, config=config)
+        ms = (time.perf_counter() - start) * 1000
+        workflow_response = (result or {}).get("workflowResponse") or {}
+        execution = workflow_response.get("execution") or (result or {}).get("execution") or {}
+        span.end(
+            output={
+                "workflow_name": workflow_name,
+                "success": True,
+                "operation": execution.get("operation"),
+                "duration_ms": ms,
+            },
+            metadata={"workflow_name": workflow_name, "success": True, "operation": execution.get("operation"), "duration_ms": ms},
+        )
+        trace_log(f"workflow requestId={get_request_id()} name={workflow_name} ms={ms:.1f}")
+        return result
+    except Exception as err:
+        ms = (time.perf_counter() - start) * 1000
+        span.end(
+            output={"workflow_name": workflow_name, "success": False, "error": str(err), "duration_ms": ms},
+            metadata={"workflow_name": workflow_name, "success": False, "error": str(err), "duration_ms": ms},
+        )
+        trace_log(f"workflow requestId={get_request_id()} name={workflow_name} ms={ms:.1f} error={err}")
+        raise
+
+
 async def run_transfer_workflow_node(state: dict, config: RunnableConfig | None = None) -> dict:
     from ai.workflows.transfer.transfer_state_machine import run_transfer_node
-    return make_json_safe(await run_transfer_node(state=state, config=config))
+    return make_json_safe(await _run_workflow_with_trace(workflow_name="transfer_workflow", func=run_transfer_node, state=state, config=config))
 
 
 async def run_transactions_workflow_node(state: dict, config: RunnableConfig | None = None) -> dict:
     from ai.workflows.transactions_workflow import run_transactions_workflow
-    return make_json_safe(await run_transactions_workflow(state=state, services=_get_services(config)))
+    return make_json_safe(await _run_workflow_with_trace(workflow_name="transactions_workflow", func=run_transactions_workflow, state=state, services=_get_services(config)))
 
 
 async def run_balance_workflow_node(state: dict, config: RunnableConfig | None = None) -> dict:
     from ai.workflows.balance_workflow import run_balance_workflow
-    return make_json_safe(await run_balance_workflow(state=state, services=_get_services(config)))
+    return make_json_safe(await _run_workflow_with_trace(workflow_name="balance_workflow", func=run_balance_workflow, state=state, services=_get_services(config)))
 
 
 async def run_support_workflow_node(state: dict, config: RunnableConfig | None = None) -> dict:
     from ai.workflows.support_workflow import run_support_workflow
-    return make_json_safe(await run_support_workflow(state=state, services=_get_services(config)))
+    return make_json_safe(await _run_workflow_with_trace(workflow_name="support_workflow", func=run_support_workflow, state=state, services=_get_services(config)))
 
 
 async def run_personal_details_workflow_node(state: dict, config: RunnableConfig | None = None) -> dict:
     from ai.workflows.personal_details_workflow import run_personal_details_workflow
-    return make_json_safe(await run_personal_details_workflow(state=state, services=_get_services(config)))
+    return make_json_safe(await _run_workflow_with_trace(workflow_name="personal_details_workflow", func=run_personal_details_workflow, state=state, services=_get_services(config)))
 
 
 async def run_unknown_workflow_node(state: dict, config: RunnableConfig | None = None) -> dict:
     from ai.workflows.unknown_workflow import run_unknown_workflow
-    return make_json_safe(await run_unknown_workflow(state=state))
+    return make_json_safe(await _run_workflow_with_trace(workflow_name="unknown_workflow", func=lambda *, state, config=None: run_unknown_workflow(state=state), state=state, config=config))
 
 
 async def return_response_node(state: dict) -> dict:
@@ -129,7 +197,7 @@ async def return_response_node(state: dict) -> dict:
     })
 
 
-def _route_to_workflow(state: dict) -> str:
+async def _route_to_workflow(state: dict) -> str:
     return (state.get("workflow") or {}).get("activeWorkflow", "unknown_workflow")
 
 
@@ -185,6 +253,13 @@ async def run_banking_graph(
 ) -> dict:
     from langgraph.types import Command
 
+    graph_start = time.perf_counter()
+    request_id = get_request_id()
+    graph_span = start_span(
+        name="run_banking_graph",
+        input={"userInput": text_preview(user_input), "history_count": len(history or [])},
+        metadata={"thread_id": thread_id or user_id},
+    )
     config = {
         "configurable": {
             "thread_id": thread_id or user_id,
@@ -224,13 +299,26 @@ async def run_banking_graph(
             for intr in (task.interrupts or []):
                 interrupt_value = intr.value or {}
                 break
-        return create_reply_payload(
+        reply_payload = create_reply_payload(
             history=(final_state or {}).get("history") or history or [],
             user_text=user_input,
             reply=interrupt_value.get("message", ""),
             transfer_state={"phase": "form_open"},  # signals active transfer to client
             action=_to_client_action(interrupt_value.get("action")),
         )
+        graph_ms = (time.perf_counter() - graph_start) * 1000
+        graph_span.end(
+            output={
+                "duration_ms": graph_ms,
+                "interrupted": True,
+                "reply": text_preview(reply_payload.get("reply", "")),
+                "nextTransferState": reply_payload.get("nextTransferState"),
+                "action": reply_payload.get("action"),
+            },
+            metadata={"duration_ms": graph_ms, "interrupted": True},
+        )
+        trace_log(f"run_banking_graph requestId={request_id} total_ms={graph_ms:.1f}")
+        return reply_payload
 
     workflow_response = normalize_workflow_response((final_state or {}).get("workflowResponse") or final_state)
 
@@ -239,10 +327,22 @@ async def run_banking_graph(
         or ((final_state or {}).get("transfer") or {}).get("nextTransferState")
     )
 
-    return create_reply_payload(
+    reply_payload = create_reply_payload(
         history=(final_state or {}).get("history") or [],
         user_text=(final_state or {}).get("userInput", ""),
         reply=workflow_response.get("message", ""),
         transfer_state=next_transfer_state,
         action=_to_client_action(workflow_response.get("action")),
     )
+    graph_ms = (time.perf_counter() - graph_start) * 1000
+    graph_span.end(
+        output={
+            "duration_ms": graph_ms,
+            "reply": text_preview(reply_payload.get("reply", "")),
+            "nextTransferState": reply_payload.get("nextTransferState"),
+            "action": reply_payload.get("action"),
+        },
+        metadata={"duration_ms": graph_ms},
+    )
+    trace_log(f"run_banking_graph requestId={request_id} total_ms={graph_ms:.1f}")
+    return reply_payload

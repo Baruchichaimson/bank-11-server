@@ -2,7 +2,16 @@
 OpenAI/Ollama/Groq client — port of openaiClient.js.
 """
 
-from openai import AsyncOpenAI
+from observability.langfuse_tracing import configure_langfuse_environment
+
+configure_langfuse_environment()
+
+try:
+    from langfuse.openai import AsyncOpenAI
+    IS_LANGFUSE_OPENAI_CLIENT = True
+except Exception:  # pragma: no cover - keeps the app usable if optional tracing import fails
+    from openai import AsyncOpenAI
+    IS_LANGFUSE_OPENAI_CLIENT = False
 from config.settings import (
     AI_PROVIDER,
     OPENAI_API_KEY, OPENAI_MODEL, OPENAI_BASE_URL, OPENAI_FALLBACK_MODEL,

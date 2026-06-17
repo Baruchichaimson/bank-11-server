@@ -1,8 +1,11 @@
 from ai.contracts.assistant_response_contract import create_executed_workflow_response, create_workflow_response
 from ai.assistant.response_formatting import format_financial_response
+from observability.langfuse_tracing import duration_ms, get_request_id, now_ms, start_span, trace_log
 
 
 async def run_personal_details_workflow(*, state: dict, services: dict) -> dict:
+    start = now_ms()
+    span = start_span(name="personal_details_workflow", metadata={"workflow_name": "personal_details_workflow"})
     profile_service = (services or {}).get("profileService")
     user_language = (state.get("session") or {}).get("userLanguage", "en")
 
@@ -21,9 +24,20 @@ async def run_personal_details_workflow(*, state: dict, services: dict) -> dict:
     message = format_financial_response("get_user_identity", state["execution"]["result"], user_language)
     final_response = create_workflow_response(**{**workflow_response, "message": message})
 
-    return {
+    output = {
         **state,
         "workflow": {**(state.get("workflow") or {}), "currentPhase": "Return Response with Suggestions"},
         "workflowResponse": final_response,
         "ui": {**(state.get("ui") or {}), "message": message},
     }
+    ms = duration_ms(start)
+    summary = {
+        "workflow_name": "personal_details_workflow",
+        "operation": "get_user_identity",
+        "duration_ms": ms,
+        "found": result.get("found"),
+        "included_fields": [k for k in ("firstName", "lastName", "email") if result.get(k)],
+    }
+    span.end(output=summary, metadata=summary)
+    trace_log(f"workflow requestId={get_request_id()} name=personal_details_workflow ms={ms:.1f}")
+    return output

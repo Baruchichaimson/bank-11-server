@@ -1,11 +1,12 @@
 from datetime import datetime, timezone
 
-MAX_CONTEXT_MESSAGES = 3
-MAX_CONTEXT_CHARS = 700
+MAX_CONTEXT_MESSAGES = 2
+MAX_CONTEXT_CHARS = 500
 DEFAULT_ASSISTANT_TIME_ZONE = "Asia/Jerusalem"
 ROUTING_INSTRUCTION = (
     "currentUserMessage overrides recentConversation unless it is a short incomplete follow-up; "
-    "if currentUserMessage is a complete standalone banking request, ignore previous conversation for routing"
+    "if currentUserMessage is a complete standalone banking request, ignore previous conversation for routing; "
+    "recentConversation is context only and must not override currentUserMessage"
 )
 
 

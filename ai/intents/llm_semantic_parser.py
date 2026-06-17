@@ -11,11 +11,17 @@ from ai.intents.semantic_catalog import (
     ALLOWED_DOMAINS, ALLOWED_INTENTS, ALLOWED_TOOL_NAMES, TOOL_BY_NAME,
     ALLOWED_AGGREGATIONS, ALLOWED_ACTIONS, ALLOWED_TYPES, ALLOWED_DIRECTIONS,
     ALLOWED_TIME_RANGES, ACTION_TO_TYPE, TYPE_TO_ACTION,
-    format_response_contract_for_prompt, format_semantic_catalog_for_prompt,
 )
 from ai.intents.llm_prompt_payload_builder import build_user_prompt_payload, get_current_date_for_prompt
 from ai.contracts.intent_result_contract import create_intent_result, create_ambiguous_intent
-from config.settings import ASSISTANT_DEBUG_ERRORS
+from config.settings import ACTIVE_AI_MODEL, ASSISTANT_DEBUG_ERRORS
+from observability.langfuse_tracing import (
+    capture_io_enabled,
+    get_request_id,
+    start_span,
+    text_preview,
+    trace_log,
+)
 
 DOMAIN_ALIASES = {
     "balance": "account", "account_balance": "account",
@@ -367,96 +373,104 @@ def _describe_validation_failure(payload: dict | None) -> str:
 def build_semantic_parser_prompt() -> str:
     current_date = get_current_date_for_prompt()
     return f"""
-You are a conversation-aware semantic banking intent classifier.
+You are a banking intent router, not an answer generator.
+Return only one strict JSON object. No markdown, no prose, no code fences.
 
-Your job is not to answer the user.
-Your job is to convert the current user message into one strict JSON routing object.
-Use recent conversation context only to resolve short follow-up messages.
-
-Return ONLY valid JSON. No markdown. No explanations. No comments.
-
-Response contract:
-{format_response_contract_for_prompt()}
-
-Semantic intent contract:
-{format_semantic_catalog_for_prompt()}
-
-Core routing:
-- classify by the meaning of the requested action, not by keyword overlap.
+Input payload fields:
 - currentUserMessage is authoritative.
-- Use recentConversation only for incomplete follow-up messages.
-- If currentUserMessage is a complete standalone banking request, ignore previous conversation for routing.
-- Never classify a clear balance/current money question as transaction history because previous messages discussed transactions.
-- Prefer semantic intent/query fields over toolName.
-- balance/current money => domain account, intent check_balance, semanticQuery null, toolName null.
-- past activity/history/list/count/filter existing transactions => domain transactions, intent recent_transactions.
-- starting/confirming/correcting/canceling a new transfer => domain transactions, intent transfer_money.
-- stored user identity/profile details => domain profile, intent show_personal_details.
-- representative/support/video call => domain support, intent contact_support.
-- Hebrew requests like "תתקשר לנציג", "אני רוצה לדבר עם נציג", "תחבר אותי לנציג", or "שיחת וידאו עם נציג" => domain support, intent contact_support.
-- unsupported, casual, or ambiguous input => domain unknown, intent unknown, toolName null.
-- toolName is legacy compatibility. Use it only for UI actions or legacy payloads; do not use toolName as the primary way to request banking data.
+- currentUserMessage: the message to route.
+- recentConversation: use only when currentUserMessage is a short incomplete follow-up.
+- If currentUserMessage is a complete standalone banking request, ignore recentConversation for routing.
+- currentDate: {current_date}; use it only for relative transaction date ranges.
 
-Transaction history parameter extraction:
-- Always return semanticQuery for recent_transactions.
-- Use semanticQuery.domain="transactions" and semanticQuery.intent="transactions_query".
-- Transfer history means action="transfer_money" and filters.type="transfer".
-- For transfers the user sent/performed ("שביצעתי", "ששלחתי", "שלחתי"), set filters.direction="outgoing".
-- For transfers the user received ("שקיבלתי", "קיבלתי", "נכנסות"), set filters.direction="incoming".
-- For all transfers ("כל ההעברות"), omit filters.direction or set filters.direction="all".
-- Generic activity/transactions without a specific type means action=null and filters.type=null.
-- Questions asking how many/count => aggregation="count", limit=null.
-- Questions asking for a specific number of rows => aggregation="first_n", limit=<number>.
-- Questions asking to show/list without a specific number => aggregation="list".
-- Singular latest/earliest requests like "מה ההעברה האחרונה שביצעתי?" or "latest transfer" => aggregation="first_n", limit=1.
-- Preserve explicit numeric limits. Convert Hebrew and English number words: שני/שתי/שתיים=2, שלוש/שלושה=3, ארבע/ארבעה=4, חמש/חמישה=5, שש/ששה=6, שבע/שבעה=7, שמונה=8, תשע/תשעה=9, עשר/עשרה=10, עשרים=20, עשרים וחמש=25.
-- אחרונות/האחרונות/אחרונים/latest/newest/most recent => sortDirection="desc".
-- ראשונות/הראשונות/ראשונים/first/earliest/oldest => sortDirection="asc".
-- If the user asks for N latest/earliest rows, use aggregation="first_n", limit=N, and the matching sortDirection.
+Allowed intents:
+- account/check_balance: current balance, available money, money in account, יתרה.
+- profile/show_personal_details: stored user identity/profile details, name, email.
+- transactions/recent_transactions: past transaction/transfer history, show/list/count/filter existing activity.
+- transactions/transfer_money: start/continue/correct/confirm/cancel a new money transfer.
+- support/contact_support: contact a representative, agent, support, video call.
+- unknown/unknown: unsupported, casual, low-confidence, or genuinely ambiguous.
 
-Date extraction:
-- Return semanticQuery.dateRange as {{"from":"YYYY-MM-DD","to":"YYYY-MM-DD"}} when the user specifies a date or relative period.
-- Use the currentDate field from the user payload for all relative dates.
-- חודש שעבר / חודש קודם / החודש שעבר / החודש הקודם / last month / previous month => full previous calendar month.
-- If currentDate is {current_date}, previous month is the full calendar month before that date.
-- החודש / חודש נוכחי / this month => from the first day of the current month through currentDate.
-- השבוע / this week => current calendar week through currentDate.
-- השבוע האחרון / מהשבוע האחרון / past week => the last 7 days through currentDate.
-- השנה / this year => from January 1 through currentDate.
-- Keep semanticQuery.timeRange=null. Never return database filters, createdAt, or Date objects.
+Required JSON schema:
+{{"domain":"account|profile|transactions|support|unknown","intent":"check_balance|show_personal_details|recent_transactions|transfer_money|contact_support|unknown","confidence":0.0,"isAmbiguous":false,"ambiguityReason":null,"toolName":null,"semanticQuery":null,"transferPayload":null}}
+
+Tool names:
+- transfer_money must use toolName "open_money_transfer_inline".
+- contact_support may use toolName "open_video_call_window".
+- Other intents use toolName null.
+
+Negative rules:
+- "מה השם שלי" is never account/check_balance.
+- "איך קוראים לי" is never account/check_balance.
+- "תבצע לי העברה" is not balance. It starts transfer_money workflow.
+- "אני רוצה להעביר כסף" is not balance. It starts transfer_money workflow.
+- Balance questions are only about current balance / money in account / יתרה.
+- Do not classify a standalone currentUserMessage as balance because recentConversation discussed balance.
+- Do not classify a standalone currentUserMessage as transaction history because recentConversation discussed transactions.
+
+Transaction history semanticQuery:
+Use this shape for recent_transactions:
+{{"domain":"transactions","intent":"transactions_query","action":"transfer_money|null","filters":{{"type":"transfer|null","direction":"outgoing|incoming|all|null"}},"timeRange":null,"dateRange":null,"aggregation":"list|first_n|count|counterparty","limit":null,"sortDirection":"desc|asc"}}
+- Transfer history => action "transfer_money", filters.type "transfer".
+- Sent/performed transfers ("שביצעתי", "ששלחתי") => direction "outgoing".
+- Received transfers ("שקיבלתי", "נכנסות") => direction "incoming".
+- Show/list without a number => aggregation "list".
+- Latest/last/specific N rows => aggregation "first_n", limit N, sortDirection "desc".
+- Count/how many => aggregation "count", limit null.
+- If a date range is explicit, return dateRange as YYYY-MM-DD strings and keep timeRange null.
+
+Transfer payload:
+For a new transfer with missing details, use:
+{{"receiverEmail":null,"amount":null,"description":null,"confirmation":null,"skipDescription":false,"startNewTransfer":true}}
+Never invent receiverEmail, amount, description, or confirmation.
 
 Examples:
-- User: "מה היתרה שלי?"
-  JSON: {{"domain":"account","intent":"check_balance","confidence":0.98,"semanticQuery":null,"toolName":null}}
-- User: "כמה כסף יש לי בחשבון?"
-  JSON: {{"domain":"account","intent":"check_balance","confidence":0.98,"semanticQuery":null,"toolName":null}}
-- User: "תראה לי את היתרה"
-  JSON: {{"domain":"account","intent":"check_balance","confidence":0.98,"semanticQuery":null,"toolName":null}}
-- User: "what is my balance?"
-  JSON: {{"domain":"account","intent":"check_balance","confidence":0.98,"semanticQuery":null,"toolName":null}}
-- User: "תראה לי את ההעברות האחרונות"
-  JSON: {{"domain":"transactions","intent":"recent_transactions","confidence":0.95,"semanticQuery":{{"domain":"transactions","intent":"transactions_query","action":"transfer_money","filters":{{"type":"transfer"}},"timeRange":null,"aggregation":"list","limit":null,"sortDirection":"desc"}}}}
-- User: "מה ההעברה האחרונה שביצעתי?"
-  JSON: {{"domain":"transactions","intent":"recent_transactions","confidence":0.95,"semanticQuery":{{"domain":"transactions","intent":"transactions_query","action":"transfer_money","filters":{{"type":"transfer","direction":"outgoing"}},"timeRange":null,"aggregation":"first_n","limit":1,"sortDirection":"desc"}}}}
-- recentConversation discussed transfers, current user: "מה היתרה שלי?"
-  JSON: {{"domain":"account","intent":"check_balance","confidence":0.98,"semanticQuery":null,"toolName":null}}
-- User: "תתקשר לנציג"
-  JSON: {{"domain":"support","intent":"contact_support","confidence":0.95,"semanticQuery":null,"toolName":null}}
-- User: "אני רוצה לדבר עם נציג"
-  JSON: {{"domain":"support","intent":"contact_support","confidence":0.95,"semanticQuery":null,"toolName":null}}
-- User: "מה הם 2 העברות האחרונות שביצעתי?"
-  JSON: {{"domain":"transactions","intent":"recent_transactions","confidence":0.95,"semanticQuery":{{"domain":"transactions","intent":"transactions_query","action":"transfer_money","filters":{{"type":"transfer","direction":"outgoing"}},"timeRange":null,"aggregation":"first_n","limit":2,"sortDirection":"desc"}}}}
-- User: "תראה לי את ההעברות שקיבלתי החודש"
-  JSON: {{"domain":"transactions","intent":"recent_transactions","confidence":0.95,"semanticQuery":{{"domain":"transactions","intent":"transactions_query","action":"transfer_money","filters":{{"type":"transfer","direction":"incoming"}},"timeRange":null,"dateRange":{{"from":"YYYY-MM-01","to":"currentDate"}},"aggregation":"list","limit":null,"sortDirection":"desc"}}}}
-- User: "תראה לי 3 העברות מהשבוע האחרון"
-  JSON: {{"domain":"transactions","intent":"recent_transactions","confidence":0.95,"semanticQuery":{{"domain":"transactions","intent":"transactions_query","action":"transfer_money","filters":{{"type":"transfer"}},"timeRange":null,"dateRange":{{"from":"currentDate minus 6 days","to":"currentDate"}},"aggregation":"first_n","limit":3,"sortDirection":"desc"}}}}
+User: "מה היתרה שלי?"
+Output:
+{{"domain":"account","intent":"check_balance","confidence":0.98,"isAmbiguous":false,"ambiguityReason":null,"toolName":null,"semanticQuery":null,"transferPayload":null}}
 
-Safety and confidence:
-- Extract only values explicitly present or clearly implied by the current message/context.
-- Never invent transfer recipient, amount, description, dates, or confirmation.
-- If confidence is below 0.65, return unknown.
-- If ambiguous between workflows, set isAmbiguous=true, give a short ambiguityReason, and return unknown/unknown.
+User: "כמה כסף יש לי בחשבון?"
+Output:
+{{"domain":"account","intent":"check_balance","confidence":0.98,"isAmbiguous":false,"ambiguityReason":null,"toolName":null,"semanticQuery":null,"transferPayload":null}}
+
+User: "מה השם שלי?"
+Output:
+{{"domain":"profile","intent":"show_personal_details","confidence":0.98,"isAmbiguous":false,"ambiguityReason":null,"toolName":null,"semanticQuery":null,"transferPayload":null}}
+
+User: "איך קוראים לי?"
+Output:
+{{"domain":"profile","intent":"show_personal_details","confidence":0.98,"isAmbiguous":false,"ambiguityReason":null,"toolName":null,"semanticQuery":null,"transferPayload":null}}
+
+User: "תתקשר לנציג"
+Output:
+{{"domain":"support","intent":"contact_support","confidence":0.98,"isAmbiguous":false,"ambiguityReason":null,"toolName":"open_video_call_window","semanticQuery":null,"transferPayload":null}}
+
+User: "תבצע לי העברה"
+Output:
+{{"domain":"transactions","intent":"transfer_money","confidence":0.98,"isAmbiguous":false,"ambiguityReason":null,"toolName":"open_money_transfer_inline","semanticQuery":null,"transferPayload":{{"receiverEmail":null,"amount":null,"description":null,"confirmation":null,"skipDescription":false,"startNewTransfer":true}}}}
+
+User: "אני רוצה להעביר כסף"
+Output:
+{{"domain":"transactions","intent":"transfer_money","confidence":0.98,"isAmbiguous":false,"ambiguityReason":null,"toolName":"open_money_transfer_inline","semanticQuery":null,"transferPayload":{{"receiverEmail":null,"amount":null,"description":null,"confirmation":null,"skipDescription":false,"startNewTransfer":true}}}}
+
+User: "תראה לי את ההעברות האחרונות"
+Output:
+{{"domain":"transactions","intent":"recent_transactions","confidence":0.95,"isAmbiguous":false,"ambiguityReason":null,"toolName":null,"semanticQuery":{{"domain":"transactions","intent":"transactions_query","action":"transfer_money","filters":{{"type":"transfer"}},"timeRange":null,"dateRange":null,"aggregation":"list","limit":null,"sortDirection":"desc"}},"transferPayload":null}}
+
+User: "מה ההעברה האחרונה שביצעתי?"
+Output:
+{{"domain":"transactions","intent":"recent_transactions","confidence":0.95,"isAmbiguous":false,"ambiguityReason":null,"toolName":null,"semanticQuery":{{"domain":"transactions","intent":"transactions_query","action":"transfer_money","filters":{{"type":"transfer","direction":"outgoing"}},"timeRange":null,"dateRange":null,"aggregation":"first_n","limit":1,"sortDirection":"desc"}},"transferPayload":null}}
+
+Confidence:
+- If confidence is below 0.65, return unknown/unknown with confidence 0.
+- If ambiguous between workflows, set isAmbiguous true, explain ambiguityReason briefly, and return unknown/unknown.
 """.strip()
+
+
+def _estimate_prompt_tokens(messages: list[dict]) -> int:
+    # Cheap diagnostic estimate for comparing prompt size in logs/traces.
+    char_count = sum(len(str(message.get("content") or "")) for message in messages)
+    return max(1, round(char_count / 4))
 
 
 async def parse_query_with_llm(*, user_input: str, history: list, create_chat_completion, abort_signal=None) -> dict | None:
@@ -464,6 +478,7 @@ async def parse_query_with_llm(*, user_input: str, history: list, create_chat_co
         return None
 
     start = time.perf_counter()
+    parser_span = None
     if ASSISTANT_DEBUG_ERRORS:
         sys.stderr.write("[LLM Parser] parse_query_with_llm start\n")
         sys.stderr.flush()
@@ -472,34 +487,135 @@ async def parse_query_with_llm(*, user_input: str, history: list, create_chat_co
         system_prompt = build_semantic_parser_prompt()
         import json
         payload = build_user_prompt_payload(user_input=user_input, history=history)
+        payload_json = json.dumps(payload, ensure_ascii=False)
         messages = [
             {"role": "system", "content": system_prompt},
-            {"role": "user", "content": json.dumps(payload)},
+            {"role": "user", "content": payload_json},
         ]
+        prompt_chars = sum(len(message["content"]) for message in messages)
+        prompt_token_estimate = _estimate_prompt_tokens(messages)
+        current_message_preview = text_preview(user_input)
+        parser_span = start_span(
+            name="llm_semantic_parser",
+            input=messages if capture_io_enabled() else {
+                "currentUserMessage": current_message_preview,
+                "recentConversationCount": len(payload.get("recentConversation") or []),
+                "promptChars": prompt_chars,
+                "promptTokenEstimate": prompt_token_estimate,
+            },
+            metadata={
+                "model": ACTIVE_AI_MODEL,
+                "response_format": "json_object",
+                "temperature": 0,
+                "top_p": 1,
+                "recentConversationCount": len(payload.get("recentConversation") or []),
+                "promptChars": prompt_chars,
+                "promptTokenEstimate": prompt_token_estimate,
+            },
+        )
+        trace_log(
+            f"llm_semantic_parser requestId={get_request_id()} "
+            f"currentUserMessage={current_message_preview.get('preview')!r} "
+            f"prompt_chars={prompt_chars} prompt_tokens_est={prompt_token_estimate} model={ACTIVE_AI_MODEL}"
+        )
 
         response = await create_chat_completion({
             "temperature": 0,
             "top_p": 1,
             "response_format": {"type": "json_object"},
             "messages": messages,
+            "langfuse_name": "llm_semantic_parser.openai",
+            "metadata": {
+                "component": "semantic_parser",
+                "currentUserMessage": current_message_preview,
+                "recentConversationCount": len(payload.get("recentConversation") or []),
+                "promptChars": prompt_chars,
+                "promptTokenEstimate": prompt_token_estimate,
+            },
         })
 
         raw_content = (response.choices[0].message.content or "") if response else ""
         parsed = json.loads(raw_content.strip())
         validated = validate_llm_semantic_parse(parsed)
+        validation_reason = None
         if not validated:
-            reason = _describe_validation_failure(parsed)
-            sys.stderr.write(f"[LLM Parser] Validation failed: {reason}\n")
-            if ASSISTANT_DEBUG_ERRORS:
+            validation_reason = _describe_validation_failure(parsed)
+            semantic_query = parsed.get("semanticQuery") if isinstance(parsed, dict) else None
+            semantic_keys = list(semantic_query.keys()) if isinstance(semantic_query, dict) else []
+            sys.stderr.write(
+                "[LLM Parser] Validation failed: "
+                f"reason={validation_reason} "
+                f"domain={(parsed or {}).get('domain') if isinstance(parsed, dict) else None} "
+                f"intent={(parsed or {}).get('intent') if isinstance(parsed, dict) else None} "
+                f"semanticQueryKeys={semantic_keys}\n"
+            )
+            if ASSISTANT_DEBUG_ERRORS or capture_io_enabled():
                 sys.stderr.write(f"[LLM Parser] Raw LLM JSON: {raw_content}\n")
             sys.stderr.flush()
+            parser_span.end(
+                output={
+                    "raw": raw_content if capture_io_enabled() else text_preview(raw_content),
+                    "parsed": parsed,
+                    "validation": False,
+                    "validationFailureReason": validation_reason,
+                    "duration_ms": (time.perf_counter() - start) * 1000,
+                },
+                metadata={
+                    "validation": False,
+                    "validationFailureReason": validation_reason,
+                    "promptChars": prompt_chars,
+                    "promptTokenEstimate": prompt_token_estimate,
+                },
+            )
+            trace_log(
+                f"llm_semantic_parser requestId={get_request_id()} "
+                f"ms={(time.perf_counter() - start) * 1000:.1f} validation=false "
+                f"parsed_domain={(parsed or {}).get('domain') if isinstance(parsed, dict) else None} "
+                f"parsed_intent={(parsed or {}).get('intent') if isinstance(parsed, dict) else None} "
+                f"prompt_tokens_est={prompt_token_estimate} model={ACTIVE_AI_MODEL}"
+            )
             return None
+        parser_span.end(
+            output={
+                "raw": raw_content if capture_io_enabled() else text_preview(raw_content),
+                "parsed": parsed,
+                "validated": {
+                    "domain": validated.get("domain"),
+                    "intent": validated.get("intent"),
+                    "confidence": validated.get("confidence"),
+                    "hasSemanticQuery": bool(validated.get("semanticQuery")),
+                },
+                "validation": True,
+                "duration_ms": (time.perf_counter() - start) * 1000,
+            },
+            metadata={
+                "validation": True,
+                "domain": validated.get("domain"),
+                "intent": validated.get("intent"),
+                "confidence": validated.get("confidence"),
+                "promptChars": prompt_chars,
+                "promptTokenEstimate": prompt_token_estimate,
+            },
+        )
+        trace_log(
+            f"llm_semantic_parser requestId={get_request_id()} "
+            f"ms={(time.perf_counter() - start) * 1000:.1f} validation=true "
+            f"parsed_domain={validated.get('domain')} parsed_intent={validated.get('intent')} "
+            f"prompt_tokens_est={prompt_token_estimate} model={ACTIVE_AI_MODEL}"
+        )
         return validated
     except asyncio.CancelledError:
+        if parser_span:
+            parser_span.end(output={"cancelled": True}, metadata={"cancelled": True})
         raise
     except Exception as err:
         sys.stderr.write(f"[LLM Parser] Error: {err}\n")
         sys.stderr.flush()
+        try:
+            if parser_span:
+                parser_span.end(output={"error": str(err)}, metadata={"error": str(err)})
+        except Exception:
+            pass
         return None
     finally:
         if ASSISTANT_DEBUG_ERRORS:

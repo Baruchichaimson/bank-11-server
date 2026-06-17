@@ -50,6 +50,25 @@ See `.env.example` for the full list with descriptions.
 
 ---
 
+## Langfuse Tracing
+
+Chatbot tracing is disabled by default. To enable it, set:
+
+```bash
+LANGFUSE_ENABLED=true
+LANGFUSE_PUBLIC_KEY=...
+LANGFUSE_SECRET_KEY=...
+LANGFUSE_BASE_URL=https://cloud.langfuse.com
+```
+
+By default traces include sanitized previews and metadata only. Set
+`LANGFUSE_CAPTURE_IO=true` in local development to capture fuller prompt and
+model I/O. Passwords, JWTs, access tokens, reset tokens, and secret keys are
+always redacted. `ASSISTANT_TRACE_LOGS=true` enables stderr timing logs without
+requiring Langfuse credentials.
+
+---
+
 ## Run the Server
 
 ```bash

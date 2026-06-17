@@ -31,6 +31,12 @@ GROQ_MODEL = os.environ.get("GROQ_MODEL", "llama-3.1-8b-instant")
 GROQ_FALLBACK_MODEL = os.environ.get("GROQ_FALLBACK_MODEL", "")
 
 AI_PROVIDER = os.environ.get("AI_PROVIDER", "openai").lower()
+if AI_PROVIDER == "ollama":
+    ACTIVE_AI_MODEL = OLLAMA_MODEL or OPENAI_MODEL or "llama3.1"
+elif AI_PROVIDER == "groq":
+    ACTIVE_AI_MODEL = GROQ_MODEL or "llama-3.1-8b-instant"
+else:
+    ACTIVE_AI_MODEL = OPENAI_MODEL or "gpt-4o-mini"
 
 CORS_ORIGINS = os.environ.get("CORS_ORIGINS", "")
 SOCKET_CORS_ORIGINS = os.environ.get("SOCKET_CORS_ORIGINS", "")
@@ -38,6 +44,12 @@ SOCKET_CORS_ORIGINS = os.environ.get("SOCKET_CORS_ORIGINS", "")
 ASSISTANT_DEBUG_ERRORS = os.environ.get("ASSISTANT_DEBUG_ERRORS", "false").lower() == "true"
 SOCKET_DEBUG = os.environ.get("SOCKET_DEBUG", "false").lower() == "true"
 BANKING_GRAPH_DEBUG = os.environ.get("BANKING_GRAPH_DEBUG", "false").lower() == "true"
+LANGFUSE_ENABLED = os.environ.get("LANGFUSE_ENABLED", "false").lower() == "true"
+LANGFUSE_PUBLIC_KEY = os.environ.get("LANGFUSE_PUBLIC_KEY", "")
+LANGFUSE_SECRET_KEY = os.environ.get("LANGFUSE_SECRET_KEY", "")
+LANGFUSE_BASE_URL = os.environ.get("LANGFUSE_BASE_URL", "https://cloud.langfuse.com")
+LANGFUSE_CAPTURE_IO = os.environ.get("LANGFUSE_CAPTURE_IO", "false").lower() == "true"
+ASSISTANT_TRACE_LOGS = os.environ.get("ASSISTANT_TRACE_LOGS", "false").lower() == "true"
 
 PENDING_REGISTRATION_CLEANUP_INTERVAL_MS = int(
     os.environ.get("PENDING_REGISTRATION_CLEANUP_INTERVAL_MS", str(60 * 60 * 1000))

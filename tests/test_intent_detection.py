@@ -23,8 +23,44 @@ def _balance_payload(confidence=0.98):
         "domain": "account",
         "intent": "check_balance",
         "confidence": confidence,
+        "isAmbiguous": False,
+        "ambiguityReason": None,
         "semanticQuery": None,
+        "transferPayload": None,
         "toolName": None,
+    }
+
+
+def _profile_payload():
+    return {
+        "domain": "profile",
+        "intent": "show_personal_details",
+        "confidence": 0.98,
+        "isAmbiguous": False,
+        "ambiguityReason": None,
+        "semanticQuery": None,
+        "transferPayload": None,
+        "toolName": None,
+    }
+
+
+def _transfer_payload():
+    return {
+        "domain": "transactions",
+        "intent": "transfer_money",
+        "confidence": 0.98,
+        "isAmbiguous": False,
+        "ambiguityReason": None,
+        "toolName": "open_money_transfer_inline",
+        "semanticQuery": None,
+        "transferPayload": {
+            "receiverEmail": None,
+            "amount": None,
+            "description": None,
+            "confirmation": None,
+            "skipDescription": False,
+            "startNewTransfer": True,
+        },
     }
 
 
@@ -33,6 +69,8 @@ def _recent_transfers_payload():
         "domain": "transactions",
         "intent": "recent_transactions",
         "confidence": 0.95,
+        "isAmbiguous": False,
+        "ambiguityReason": None,
         "semanticQuery": {
             "domain": "transactions",
             "intent": "transactions_query",
@@ -43,6 +81,7 @@ def _recent_transfers_payload():
             "limit": None,
             "sortDirection": "desc",
         },
+        "transferPayload": None,
         "toolName": None,
     }
 
@@ -56,10 +95,18 @@ def test_semantic_parser_prompt_prioritizes_standalone_balance_messages():
     prompt = build_semantic_parser_prompt()
 
     assert "currentUserMessage is authoritative" in prompt
-    assert "Never classify a clear balance/current money question as transaction history" in prompt
-    assert 'User: "מה היתרה שלי?"' in prompt
-    assert 'User: "what is my balance?"' in prompt
-    assert 'recentConversation discussed transfers, current user: "מה היתרה שלי?"' in prompt
+    assert "Response contract:" not in prompt
+    assert "Semantic intent contract:" not in prompt
+    assert 'User: "מה השם שלי?"' in prompt
+    assert 'User: "איך קוראים לי?"' in prompt
+    assert 'User: "תבצע לי העברה"' in prompt
+    assert 'User: "אני רוצה להעביר כסף"' in prompt
+    assert '"domain":"profile","intent":"show_personal_details"' in prompt
+    assert '"domain":"transactions","intent":"transfer_money"' in prompt
+    assert '"toolName":"open_money_transfer_inline"' in prompt
+    assert '"מה השם שלי" is never account/check_balance' in prompt
+    assert '"תבצע לי העברה" is not balance' in prompt
+    assert len(prompt) < 7000
 
 
 @pytest.mark.asyncio
@@ -121,7 +168,7 @@ async def test_current_balance_message_overrides_transaction_history_context():
     async def fake_chat_completion(payload):
         user_payload = _user_prompt_payload(payload)
         assert user_payload["currentUserMessage"] == "מה היתרה שלי?"
-        assert len(user_payload["recentConversation"]) == 3
+        assert len(user_payload["recentConversation"]) == 2
         assert any("העברה" in item["content"] for item in user_payload["recentConversation"])
         return _completion_response(_balance_payload())
 
@@ -133,6 +180,91 @@ async def test_current_balance_message_overrides_transaction_history_context():
 
     assert result["domain"] == "account"
     assert result["intent"] == "check_balance"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("message", ["מה השם שלי", "מה השם שלי?", "איך קוראים לי"])
+async def test_profile_questions_return_profile_intent(message):
+    async def fake_chat_completion(payload):
+        user_payload = _user_prompt_payload(payload)
+        assert user_payload["currentUserMessage"] == message
+        return _completion_response(_profile_payload())
+
+    result = await detect_intent(
+        user_input=message,
+        history=[],
+        create_chat_completion=fake_chat_completion,
+    )
+
+    assert result["domain"] == "profile"
+    assert result["intent"] == "show_personal_details"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("message", ["תבצע לי העברה", "אני רוצה להעביר כסף"])
+async def test_transfer_start_questions_return_transfer_money_intent(message):
+    async def fake_chat_completion(payload):
+        user_payload = _user_prompt_payload(payload)
+        assert user_payload["currentUserMessage"] == message
+        return _completion_response(_transfer_payload())
+
+    result = await detect_intent(
+        user_input=message,
+        history=[],
+        create_chat_completion=fake_chat_completion,
+    )
+
+    assert result["domain"] == "transactions"
+    assert result["intent"] == "transfer_money"
+    assert result["tool"]["name"] == "open_money_transfer_inline"
+    assert result["transferPayload"]["startNewTransfer"] is True
+
+
+@pytest.mark.asyncio
+async def test_balance_history_does_not_override_current_profile_intent():
+    history = [
+        {"role": "user", "content": "מה היתרה שלי"},
+        {"role": "assistant", "content": "היתרה שלך היא 1234 ILS."},
+    ]
+
+    async def fake_chat_completion(payload):
+        user_payload = _user_prompt_payload(payload)
+        assert user_payload["currentUserMessage"] == "מה השם שלי"
+        assert any("יתרה" in item["content"] for item in user_payload["recentConversation"])
+        return _completion_response(_profile_payload())
+
+    result = await detect_intent(
+        user_input="מה השם שלי",
+        history=history,
+        create_chat_completion=fake_chat_completion,
+    )
+
+    assert result["domain"] == "profile"
+    assert result["intent"] == "show_personal_details"
+
+
+@pytest.mark.asyncio
+async def test_balance_history_does_not_override_current_transfer_intent():
+    history = [
+        {"role": "user", "content": "מה היתרה שלי"},
+        {"role": "assistant", "content": "היתרה שלך היא 1234 ILS."},
+    ]
+
+    async def fake_chat_completion(payload):
+        user_payload = _user_prompt_payload(payload)
+        assert user_payload["currentUserMessage"] == "תבצע לי העברה"
+        assert any("יתרה" in item["content"] for item in user_payload["recentConversation"])
+        return _completion_response(_transfer_payload())
+
+    result = await detect_intent(
+        user_input="תבצע לי העברה",
+        history=history,
+        create_chat_completion=fake_chat_completion,
+    )
+
+    assert result["domain"] == "transactions"
+    assert result["intent"] == "transfer_money"
+    assert result["transferPayload"]["startNewTransfer"] is True
 
 
 @pytest.mark.asyncio

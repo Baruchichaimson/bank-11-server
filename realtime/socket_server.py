@@ -6,6 +6,7 @@ chat work runs on the ASGI event loop with cancellable asyncio tasks.
 """
 
 import asyncio
+import os
 import random
 import re
 import string
@@ -17,8 +18,21 @@ import socketio
 from asgiref.wsgi import WsgiToAsgi
 
 from config.cors_origins import get_allowed_origins
-from config.settings import ASSISTANT_DEBUG_ERRORS, IS_PRODUCTION, JWT_SECRET, SOCKET_DEBUG
+from config.settings import ACTIVE_AI_MODEL, ASSISTANT_DEBUG_ERRORS, AI_PROVIDER, IS_PRODUCTION, JWT_SECRET, SOCKET_DEBUG
 from models.user_model import find_user_by_id, find_verified_user_by_email
+from observability.langfuse_tracing import (
+    capture_io_enabled,
+    flush_langfuse,
+    get_trace_fields,
+    mask_email,
+    now_ms,
+    reset_trace_context,
+    set_trace_context,
+    start_trace,
+    text_preview,
+    trace_log,
+    duration_ms,
+)
 
 AUTH_COOKIE_NAME = "access_token"
 CALL_INVITE_TTL_SEC = 60
@@ -144,6 +158,7 @@ async def _run_chat_request(*, sid: str, request_id: str, request_state: dict, t
     conn = _connection_state.get(sid)
     if not conn:
         return
+    trace_tokens = set_trace_context(request_state.get("trace"), request_id=request_id)
 
     def is_cancelled() -> bool:
         active = conn.get("active_requests", {})
@@ -152,6 +167,7 @@ async def _run_chat_request(*, sid: str, request_id: str, request_state: dict, t
     try:
         from ai.assistant.chat_assistant import generate_assistant_reply
 
+        start_ms = request_state.get("startMs")
         result = await generate_assistant_reply(
             user_input=text,
             user_id=conn["user"]["id"],
@@ -165,6 +181,25 @@ async def _run_chat_request(*, sid: str, request_id: str, request_state: dict, t
 
         conn["history"] = result.get("nextHistory") or conn["history"]
 
+        trace_fields = get_trace_fields()
+        action = result.get("action")
+        action_type = action.get("type") if isinstance(action, dict) else action
+        total_ms = None
+        if start_ms:
+            total_ms = duration_ms(start_ms)
+        request_state["trace"].end(
+            output={
+                "reply": text_preview(result.get("reply", "")),
+                "selectedDomain": trace_fields.get("selected_domain"),
+                "selectedIntent": trace_fields.get("selected_intent"),
+                "selectedWorkflow": trace_fields.get("selected_workflow"),
+                "actionType": action_type,
+                "cancelled": False,
+                "duration_ms": total_ms,
+            },
+            metadata={"cancelled": False, "duration_ms": total_ms},
+        )
+        trace_log(f"chat_message requestId={request_id} total_ms={total_ms:.1f}" if total_ms is not None else f"chat_message requestId={request_id} total_ms=unknown")
         _log_socket(f"bot_reply emitted requestId={request_id}")
         await async_sio.emit(
             "bot_reply",
@@ -178,6 +213,10 @@ async def _run_chat_request(*, sid: str, request_id: str, request_state: dict, t
         )
     except asyncio.CancelledError:
         request_state["cancelled"] = True
+        request_state["trace"].end(
+            output={"cancelled": True, "cancel_reason": "task_cancelled"},
+            metadata={"cancelled": True, "cancel_reason": "task_cancelled"},
+        )
         raise
     except Exception as err:
         if is_cancelled():
@@ -191,9 +230,15 @@ async def _run_chat_request(*, sid: str, request_id: str, request_state: dict, t
             else f"Assistant error: {err_str}"
         )
         _log_socket(f"chat_error emitted requestId={request_id} error={err_str}")
+        request_state["trace"].end(
+            output={"error": err_str, "cancelled": False},
+            metadata={"error": err_str, "cancelled": False},
+        )
         await async_sio.emit("chat_error", {"requestId": request_id, "message": msg}, to=sid)
         print(f"Socket assistant error: {err_str}")
     finally:
+        reset_trace_context(trace_tokens)
+        flush_langfuse()
         active = conn.get("active_requests", {})
         if active.get(request_id) is request_state:
             active.pop(request_id, None)
@@ -295,23 +340,46 @@ def create_async_socket_server() -> socketio.AsyncServer:
         if existing:
             _cancel_active_chat_request(existing)
 
-        request_state = {"cancelled": False, "task": None}
+        text = str(payload.get("message") or "").strip()
+        transfer_payload = _normalize_transfer_payload(payload.get("transferPayload"))
+        trace = start_trace(
+            name="chat_message",
+            input=text if capture_io_enabled() else text_preview(text),
+            metadata={
+                "requestId": request_id,
+                "sid": sid,
+                "userId": conn["user"]["id"],
+                "userEmail": mask_email(conn["user"]["email"]),
+                "messageLength": len(text),
+                "hasTransferPayload": bool(transfer_payload),
+                "cancelled": False,
+                "environment": os.environ.get("NODE_ENV", "development"),
+                "ai_provider": AI_PROVIDER,
+                "model": ACTIVE_AI_MODEL,
+            },
+            user_id=conn["user"]["id"],
+            session_id=sid,
+            tags=["chatbot", "socketio"],
+        )
+        request_state = {"cancelled": False, "task": None, "trace": trace, "startMs": now_ms()}
         active_requests[request_id] = request_state
 
-        text = str(payload.get("message") or "").strip()
         if not text:
             _log_socket(f"chat_error emitted requestId={request_id} reason=message_required")
+            trace.end(output={"error": "Message is required", "cancelled": False})
             await sio.emit("chat_error", {"requestId": request_id, "message": "Message is required"}, to=sid)
             active_requests.pop(request_id, None)
+            flush_langfuse()
             return
 
         if len(text) > 2000:
             _log_socket(f"chat_error emitted requestId={request_id} reason=message_too_long")
+            trace.end(output={"error": "Message is too long", "cancelled": False})
             await sio.emit("chat_error", {"requestId": request_id, "message": "Message is too long"}, to=sid)
             active_requests.pop(request_id, None)
+            flush_langfuse()
             return
 
-        transfer_payload = _normalize_transfer_payload(payload.get("transferPayload"))
         task = asyncio.create_task(
             _run_chat_request(
                 sid=sid,
@@ -340,7 +408,15 @@ def create_async_socket_server() -> socketio.AsyncServer:
 
         _cancel_active_chat_request(request_state)
         _log_socket(f"request canceled requestId={request_id}")
+        trace = request_state.get("trace")
+        if trace:
+            trace.end(
+                output={"requestId": request_id, "cancelled": True, "cancel_reason": "user_cancel"},
+                metadata={"cancelled": True, "cancel_reason": "user_cancel"},
+            )
+        trace_log(f"chat_message requestId={request_id} cancelled=true cancel_reason=user_cancel")
         await sio.emit("chat_canceled", {"requestId": request_id}, to=sid)
+        flush_langfuse()
 
     @sio.on("call_request")
     async def on_call_request(sid, payload):
