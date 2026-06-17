@@ -3,14 +3,13 @@ Banking LangGraph — Python port of bankingGraph.js.
 Uses langgraph StateGraph with BankingState TypedDict.
 """
 
-import asyncio
 from langchain_core.runnables import RunnableConfig
 from langgraph.graph import StateGraph, START, END
+from langgraph.checkpoint.memory import MemorySaver
 from ai.graph.banking_state import BankingState, create_initial_banking_state
 from ai.graph.workflow_router import route_workflow
 from ai.intents.detect_intent import detect_intent
 from ai.contracts.assistant_response_contract import normalize_workflow_response
-from ai.contracts.intent_result_contract import create_intent_result
 from ai.assistant.shared import detect_language, create_reply_payload
 from config.settings import BANKING_GRAPH_DEBUG
 
@@ -18,24 +17,6 @@ from config.settings import BANKING_GRAPH_DEBUG
 def _debug(*args):
     if BANKING_GRAPH_DEBUG:
         print(*args)
-
-
-def _is_active_transfer_state(transfer_state=None) -> bool:
-    phase = (transfer_state or {}).get("phase")
-    return bool(phase and phase != "idle")
-
-
-def _has_meaningful_transfer_payload(payload=None) -> bool:
-    if not payload or not isinstance(payload, dict):
-        return False
-    return bool(
-        payload.get("receiverEmail")
-        or payload.get("amount")
-        or payload.get("description")
-        or payload.get("confirmation")
-        or payload.get("skipDescription")
-        or payload.get("startNewTransfer")
-    )
 
 
 def _to_client_action(action):
@@ -63,30 +44,6 @@ async def user_request_node(state: dict) -> dict:
 
 async def find_intent_node(state: dict, config: RunnableConfig | None = None) -> dict:
     configurable = (config or {}).get("configurable") or {}
-    transfer_payload = (state.get("intent") or {}).get("transferPayload")
-
-    if (
-        _is_active_transfer_state((state.get("transfer") or {}).get("nextTransferState"))
-        or _has_meaningful_transfer_payload(transfer_payload)
-    ):
-        intent_result = create_intent_result(
-            domain="transactions",
-            intent="transfer_money",
-            confidence=1,
-            source="transfer_workflow_state",
-            workflow_continuation={"active": True},
-            transfer_payload=transfer_payload,
-        )
-        intent_result["detectedIntent"] = intent_result["intent"]
-        _debug("BANKING GRAPH DETECTED INTENT", intent_result["intent"], "from transfer_workflow_state")
-        return {
-            **state,
-            "intent": intent_result,
-            "audit": {
-                **(state.get("audit") or {}),
-                "transitions": [*((state.get("audit") or {}).get("transitions") or []), "Intent: transfer_money"],
-            },
-        }
 
     detection = await detect_intent(
         user_input=state.get("userInput", ""),
@@ -132,19 +89,9 @@ def _get_services(config):
     return (config or {}).get("configurable", {}).get("services")
 
 
-def _get_create_chat_completion(config):
-    return (config or {}).get("configurable", {}).get("createChatCompletion")
-
-
-def _get_abort_signal(config):
-    return (config or {}).get("configurable", {}).get("abortSignal")
-
-
 async def run_transfer_workflow_node(state: dict, config: RunnableConfig | None = None) -> dict:
-    from ai.workflows.transfer_workflow import run_transfer_workflow
-    return await run_transfer_workflow(state=state, services=_get_services(config),
-                                       create_chat_completion=_get_create_chat_completion(config),
-                                       abort_signal=_get_abort_signal(config))
+    from ai.workflows.transfer.transfer_state_machine import run_transfer_node
+    return await run_transfer_node(state=state, config=config)
 
 
 async def run_transactions_workflow_node(state: dict, config: RunnableConfig | None = None) -> dict:
@@ -217,7 +164,7 @@ def create_banking_graph():
     graph.add_edge("unknown_workflow", "return_response")
     graph.add_edge("return_response", END)
 
-    return graph.compile()
+    return graph.compile(checkpointer=MemorySaver())
 
 
 banking_graph = create_banking_graph()
@@ -229,44 +176,71 @@ async def run_banking_graph(
     user_id: str,
     user_email: str = None,
     history: list = None,
-    transfer_state: dict = None,
     transfer_payload: dict = None,
     create_chat_completion=None,
     services: dict = None,
     abort_signal=None,
+    thread_id: str = None,
 ) -> dict:
-    user_language = detect_language(user_input)
-    initial_state = create_initial_banking_state(
-        user_input=user_input,
-        history=history or [],
-        user_id=user_id,
-        user_email=user_email,
-        user_language=user_language,
-        transfer_state=transfer_state,
-        transfer_payload=transfer_payload,
-    )
+    from langgraph.types import Command
 
-    final_state = await banking_graph.ainvoke(
-        initial_state,
-        config={
-            "configurable": {
-                "createChatCompletion": create_chat_completion,
-                "services": services,
-                "abortSignal": abort_signal,
-            }
-        },
-    )
+    config = {
+        "configurable": {
+            "thread_id": thread_id or user_id,
+            "createChatCompletion": create_chat_completion,
+            "services": services,
+            "abortSignal": abort_signal,
+        }
+    }
 
-    workflow_response = normalize_workflow_response(final_state.get("workflowResponse") or final_state)
+    # If the graph is paused at an interrupt (active transfer waiting for user),
+    # resume it with the new user input instead of starting fresh.
+    current = await banking_graph.aget_state(config)
+    is_resuming = bool(current and current.values and current.next)
+
+    if is_resuming:
+        final_state = await banking_graph.ainvoke(
+            Command(resume={"userInput": user_input, "transferPayload": transfer_payload}),
+            config=config,
+        )
+    else:
+        user_language = detect_language(user_input)
+        initial_state = create_initial_banking_state(
+            user_input=user_input,
+            history=history or [],
+            user_id=user_id,
+            user_email=user_email,
+            user_language=user_language,
+            transfer_payload=transfer_payload,
+        )
+        final_state = await banking_graph.ainvoke(initial_state, config=config)
+
+    # Check if the graph paused at a new interrupt (transfer is still in progress)
+    updated = await banking_graph.aget_state(config)
+    if updated and updated.next:
+        interrupt_value = {}
+        for task in (updated.tasks or []):
+            for intr in (task.interrupts or []):
+                interrupt_value = intr.value or {}
+                break
+        return create_reply_payload(
+            history=(final_state or {}).get("history") or history or [],
+            user_text=user_input,
+            reply=interrupt_value.get("message", ""),
+            transfer_state={"phase": "form_open"},  # signals active transfer to client
+            action=_to_client_action(interrupt_value.get("action")),
+        )
+
+    workflow_response = normalize_workflow_response((final_state or {}).get("workflowResponse") or final_state)
 
     next_transfer_state = (
         workflow_response.get("nextConversationState")
-        or (final_state.get("transfer") or {}).get("nextTransferState")
+        or ((final_state or {}).get("transfer") or {}).get("nextTransferState")
     )
 
     return create_reply_payload(
-        history=final_state.get("history") or [],
-        user_text=final_state.get("userInput", ""),
+        history=(final_state or {}).get("history") or [],
+        user_text=(final_state or {}).get("userInput", ""),
         reply=workflow_response.get("message", ""),
         transfer_state=next_transfer_state,
         action=_to_client_action(workflow_response.get("action")),

@@ -4,7 +4,6 @@ Uses TypedDict for LangGraph state annotations.
 """
 
 from typing import Any, Optional
-from langgraph.graph import StateGraph
 from typing_extensions import TypedDict
 
 
@@ -35,7 +34,6 @@ def create_initial_banking_state(
     user_id: str,
     user_email: str = None,
     user_language: str = "en",
-    transfer_state: dict = None,
     transfer_payload: dict = None,
 ) -> dict:
     from ai.contracts.assistant_response_contract import create_empty_workflow_response
@@ -49,7 +47,7 @@ def create_initial_banking_state(
             "userId": user_id,
             "userEmail": user_email,
             "userLanguage": user_language,
-            "flowLanguage": (transfer_state or {}).get("flowLanguage") or user_language,
+            "flowLanguage": user_language,
         },
         "isolation": {"userInput": user_input, "userId": user_id, "userLanguage": user_language},
         "intent": {
@@ -62,7 +60,15 @@ def create_initial_banking_state(
             "currentPhase": "User Request",
             "cancelled": False,
         },
-        "transfer": _create_transfer_state(transfer_state),
+        "transfer": {
+            "nextTransferState": None,
+            "receiverEmail": "",
+            "amount": None,
+            "description": "",
+            "confirmationRequired": False,
+            "phase": "idle",
+            "lastValidationError": None,
+        },
         "transactions": {"filters": None, "dateRange": None, "transactionType": None},
         "balance": {"currentBalance": None, "accountSummary": None},
         "support": {"ticketId": None},
@@ -72,17 +78,4 @@ def create_initial_banking_state(
         "workflowResponse": create_empty_workflow_response(),
         "ui": {"message": "", "form": None, "suggestions": [], "action": None},
         "audit": {"transitions": [], "aiDecisions": []},
-    }
-
-
-def _create_transfer_state(transfer_state: dict | None) -> dict:
-    ts = transfer_state or {}
-    return {
-        "nextTransferState": transfer_state,
-        "receiverEmail": ts.get("receiverEmail", ""),
-        "amount": ts.get("amount"),
-        "description": ts.get("description", ""),
-        "confirmationRequired": bool(ts.get("riskConfirmationAsked")),
-        "phase": ts.get("phase", "idle"),
-        "lastValidationError": ts.get("lastValidationError"),
     }

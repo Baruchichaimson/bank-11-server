@@ -80,7 +80,7 @@ def init_socket_server(app, flask_app) -> SocketIO:
     socketio = SocketIO(
         app,
         cors_allowed_origins=get_allowed_origins(),
-        async_mode="eventlet",
+        async_mode="gevent",
         manage_session=False,
     )
 
@@ -129,7 +129,6 @@ def init_socket_server(app, flask_app) -> SocketIO:
             _connection_state[sid] = {
                 "user": user_obj,
                 "history": [],
-                "transfer_state": None,
                 "active_requests": {},  # requestId -> cancelled flag dict
             }
             _debug("SOCKET AUTH SUCCESS", user_obj["id"])
@@ -199,14 +198,6 @@ def init_socket_server(app, flask_app) -> SocketIO:
             return
 
         transfer_payload = _normalize_transfer_payload(payload.get("transferPayload"))
-        transfer_state = conn.get("transfer_state")
-        if _is_active_transfer_state(transfer_state) and not _has_meaningful_transfer_payload(transfer_payload):
-            socketio.emit("chat_error", {
-                "requestId": request_id,
-                "message": "Complete the current workflow before sending another chat message.",
-            }, to=sid)
-            conn["active_requests"].pop(request_id, None)
-            return
 
         async def _run():
             from ai.assistant.chat_assistant import generate_assistant_reply
@@ -216,20 +207,19 @@ def init_socket_server(app, flask_app) -> SocketIO:
                     user_id=conn["user"]["id"],
                     user_email=_normalize_email(conn["user"]["email"]),
                     history=conn["history"],
-                    transfer_state=transfer_state,
                     transfer_payload=transfer_payload,
+                    thread_id=sid,
                 )
                 if flag["cancelled"]:
                     return
 
                 conn["history"] = result.get("nextHistory") or conn["history"]
-                conn["transfer_state"] = result.get("nextTransferState") or None
 
                 socketio.emit("bot_reply", {
                     "requestId": request_id,
                     "message": result.get("reply", ""),
                     "action": result.get("action"),
-                    "nextTransferState": conn["transfer_state"],
+                    "nextTransferState": result.get("nextTransferState"),
                 }, to=sid)
             except Exception as err:
                 if flag["cancelled"]:
@@ -423,19 +413,3 @@ def _normalize_transfer_payload(value) -> dict | None:
     }
 
 
-def _is_active_transfer_state(state=None) -> bool:
-    phase = (state or {}).get("phase")
-    return bool(phase and phase != "idle")
-
-
-def _has_meaningful_transfer_payload(payload=None) -> bool:
-    if not payload or not isinstance(payload, dict):
-        return False
-    return bool(
-        payload.get("receiverEmail")
-        or payload.get("amount") is not None
-        or payload.get("description")
-        or payload.get("confirmation")
-        or payload.get("skipDescription")
-        or payload.get("startNewTransfer")
-    )

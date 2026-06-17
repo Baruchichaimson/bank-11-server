@@ -1,9 +1,13 @@
 """
-Transfer state machine — Python port of transferStateMachine.js.
+Transfer state machine — LangGraph subgraph.
 Implements the same phases: idle, form_open, await_confirmation.
 """
 
 import re
+from langchain_core.runnables import RunnableConfig
+from langgraph.graph import StateGraph, START, END
+from typing_extensions import TypedDict
+from typing import Any, Optional
 from ai.contracts.assistant_response_contract import create_executed_workflow_response, create_workflow_response
 
 TRANSFER_PHASE_IDLE = "idle"
@@ -31,6 +35,37 @@ RESET_TRANSFER_FLOW = {
 }
 
 EMAIL_PATTERN = re.compile(r"^[a-z0-9._%+\-]+@[a-z0-9.\-]+\.[a-z]{2,}$", re.IGNORECASE)
+
+
+class TransferState(TypedDict, total=False):
+    userInput: str
+    userLanguage: str
+    flowLanguage: str
+    userId: str
+    phase: str
+    receiverEmail: str
+    amount: Optional[float]
+    description: str
+    riskConfirmationAsked: bool
+    lastValidationError: Any
+    semanticIntent: str
+    transferPayload: Any
+    correction: Any
+    transferIntent: bool
+    handled: bool
+    shouldRunTransfer: bool
+    transferExecuted: bool
+    reply: str
+    action: Any
+    errorMessage: Optional[str]
+    senderUser: Any
+    receiverUser: Any
+    senderAccount: Any
+    receiverAccount: Any
+    riskRulesAndLimits: Any
+    riskAssessment: Any
+    transactionResult: Any
+    suggestions: Any
 
 
 # ---------------------------------------------------------------------------
@@ -154,7 +189,7 @@ async def get_semantic_transfer_payload(*, state: dict, create_chat_completion=N
         abort_signal=abort_signal,
     )
 
-    merged_result = {
+    return {
         "receiverEmail": normalized.get("receiverEmail") or llm_extracted.get("receiverEmail") or "",
         "amount": normalized.get("amount") if normalized.get("amount") is not None else llm_extracted.get("amount"),
         "description": normalized.get("description") or llm_extracted.get("description") or "",
@@ -162,7 +197,6 @@ async def get_semantic_transfer_payload(*, state: dict, create_chat_completion=N
         "skipDescription": bool(normalized.get("skipDescription") or llm_extracted.get("skipDescription")),
         "startNewTransfer": bool(normalized.get("startNewTransfer") or llm_extracted.get("startNewTransfer")),
     }
-    return merged_result
 
 
 # ---------------------------------------------------------------------------
@@ -255,517 +289,323 @@ def build_transfer_success_reply(*, language: str, amount, receiver_email: str, 
 
 
 # ---------------------------------------------------------------------------
-# Transfer state machine (sequential, not LangGraph sub-graph)
+# Interrupt-driven node  (Phase B — replaces the subgraph above)
 # ---------------------------------------------------------------------------
 
-async def run_transfer_state_machine(
-    *,
-    user_input: str,
-    user_language: str,
-    user_id: str,
-    transfer_state: dict,
-    semantic_intent: str = "unknown",
-    transfer_payload: dict = None,
-    correction: dict = None,
-    services: dict,
-    create_chat_completion=None,
-    abort_signal=None,
-) -> dict:
-    state = {
-        "userInput": user_input,
-        "userLanguage": user_language,
-        "flowLanguage": (transfer_state or {}).get("flowLanguage") or ("he" if user_language == "he" else "en"),
-        "userId": user_id,
-        "phase": _normalize_transfer_phase((transfer_state or {}).get("phase")),
-        "receiverEmail": (transfer_state or {}).get("receiverEmail", ""),
-        "amount": (transfer_state or {}).get("amount"),
-        "description": (transfer_state or {}).get("description", ""),
-        "riskConfirmationAsked": bool((transfer_state or {}).get("riskConfirmationAsked")),
-        "lastValidationError": (transfer_state or {}).get("lastValidationError"),
-        "handled": False,
-        "reply": "",
-        "action": None,
-        "shouldRunTransfer": False,
-        "transferExecuted": False,
-        "semanticIntent": semantic_intent,
-        "transferPayload": transfer_payload,
-        "correction": correction,
-    }
+async def run_transfer_node(state: dict, config: RunnableConfig | None = None) -> dict:
+    """
+    Single-node transfer workflow using LangGraph interrupt() for multi-turn collection.
+    The graph pauses at each interrupt() and resumes when the user sends the next message.
+    All phase bookkeeping is handled by the checkpointer — no manual nextTransferState needed.
+    """
+    from langgraph.types import interrupt
+    from ai.contracts.assistant_response_contract import create_workflow_response, create_executed_workflow_response
 
-    state = await _parse_input_node(state, create_chat_completion=create_chat_completion)
-    if not (state.get("handled") and not state.get("shouldRunTransfer")):
-        state = await _validate_transfer_node(state, services=services, user_language=user_language)
-    if not (state.get("handled") and not state.get("shouldRunTransfer")):
-        state = await _risk_check_node(state, services=services)
-    if not (state.get("handled") and not state.get("shouldRunTransfer")):
-        state = await _execute_transfer_node(state, services=services)
-    state = await _build_response_node(state, services=services)
+    configurable = (config or {}).get("configurable") or {}
+    services = configurable.get("services")
+    create_chat_completion = configurable.get("createChatCompletion")
 
-    return state
+    session = state.get("session") or {}
+    user_language = session.get("userLanguage", "en")
+    user_id = str(session.get("userId") or "")
+    intent = state.get("intent") or {}
+    transfer = state.get("transfer") or {}
 
+    receiver_email = transfer.get("receiverEmail") or ""
+    amount = transfer.get("amount")
+    description = transfer.get("description") or ""
+    flow_language = transfer.get("flowLanguage") or user_language
 
-def _normalize_transfer_phase(phase: str | None) -> str:
-    if phase in ("collect_receiver", "collect_amount", "collect_description"):
-        return TRANSFER_PHASE_FORM_OPEN
-    return phase if phase in (TRANSFER_PHASE_IDLE, TRANSFER_PHASE_FORM_OPEN, TRANSFER_PHASE_AWAIT_CONFIRMATION) else TRANSFER_PHASE_IDLE
+    # ── Inline helpers ─────────────────────────────────────────────────────
 
-
-async def _parse_input_node(state: dict, create_chat_completion=None) -> dict:
-    user_input = str(state.get("userInput") or "").strip()
-    user_language = state.get("flowLanguage", "en")
-    phase = state.get("phase") or TRANSFER_PHASE_IDLE
-    semantic_intent = state.get("semanticIntent") or "unknown"
-    transfer_intent = phase != TRANSFER_PHASE_IDLE or semantic_intent == "transfer_money"
-
-    state = {**state, "transferIntent": transfer_intent}
-
-    semantic_transfer = await get_semantic_transfer_payload(
-        state=state,
-        create_chat_completion=create_chat_completion,
-    )
-
-    if not user_input:
-        return {**state, "handled": False, "reply": "", "phase": phase}
-
-    if not transfer_intent and phase == TRANSFER_PHASE_IDLE:
-        return {**state, "handled": False, "reply": "", "action": None, "phase": TRANSFER_PHASE_IDLE}
-
-    if semantic_transfer.get("confirmation") == "no":
+    def _cancel():
+        msg = "ביטלתי את תהליך ההעברה." if flow_language == "he" else "I canceled the transfer flow."
         return {
             **state,
-            "handled": True,
-            "reply": "ביטלתי את תהליך ההעברה." if user_language == "he" else "I canceled the transfer flow.",
-            "action": build_reset_transfer_form_action(user_language),
-            **RESET_TRANSFER_FLOW,
-            "shouldRunTransfer": False,
+            "workflowResponse": create_workflow_response(
+                message=msg,
+                action=build_reset_transfer_form_action(flow_language),
+                next_conversation_state=None,
+                execution={"executed": False, "operation": "transfer_money", "result": None},
+            ),
+            "transfer": {**(state.get("transfer") or {}), **RESET_TRANSFER_FLOW},
         }
 
-    receiver_email = state.get("receiverEmail", "")
-    amount = state.get("amount")
-    description = state.get("description", "")
-    risk_confirmation_asked = bool(state.get("riskConfirmationAsked"))
-    flow_language = state.get("flowLanguage") or user_language
-
-    parsed_payload = None
-    if semantic_transfer.get("receiverEmail") and semantic_transfer.get("amount"):
-        parsed_payload = {
-            "receiverEmail": semantic_transfer["receiverEmail"],
-            "amount": semantic_transfer["amount"],
-            "description": semantic_transfer.get("description", ""),
-        }
-
-    if parsed_payload:
+    def _error(msg):
         return {
             **state,
-            "handled": True,
-            "reply": "",
-            "action": None,
-            "phase": TRANSFER_PHASE_AWAIT_CONFIRMATION,
-            "receiverEmail": parsed_payload["receiverEmail"],
-            "amount": parsed_payload["amount"],
-            "description": parsed_payload.get("description", ""),
-            "riskConfirmationAsked": False,
-            "flowLanguage": flow_language,
-            "shouldRunTransfer": True,
+            "workflowResponse": create_workflow_response(
+                message=msg, action=None, next_conversation_state=None,
+                execution={"executed": False, "operation": "transfer_money", "result": None},
+            ),
+            "transfer": {**(state.get("transfer") or {}), **RESET_TRANSFER_FLOW},
         }
 
-    if phase != TRANSFER_PHASE_IDLE and semantic_transfer.get("startNewTransfer"):
-        next_lang = "he" if state.get("userLanguage") == "he" else "en"
+    def _form_error(field, msg):
+        safe_email = "" if field == "receiverEmail" else receiver_email
+        safe_amount = None if field == "amount" else amount
         return {
             **state,
-            "handled": True,
-            "reply": "פתחתי עבורך טופס העברה חדש בתוך הצ׳אט. מלא פרטים ולחץ שלח." if next_lang == "he" else "I opened a new transfer form in the chat. Fill the details and submit.",
-            "action": build_open_transfer_form_action(next_lang),
-            "phase": TRANSFER_PHASE_FORM_OPEN,
-            "receiverEmail": "",
-            "amount": None,
-            "description": "",
-            "riskConfirmationAsked": False,
-            "flowLanguage": next_lang,
-            "shouldRunTransfer": False,
-        }
-
-    if phase == TRANSFER_PHASE_IDLE:
-        flow_language = "he" if state.get("userLanguage") == "he" else "en"
-        parsed_email = semantic_transfer.get("receiverEmail")
-        parsed_amount = semantic_transfer.get("amount")
-        parsed_description = semantic_transfer.get("description", "")
-
-        if parsed_email and parsed_amount:
-            return {
-                **state,
-                "handled": True,
-                "reply": "",
-                "action": None,
-                "phase": TRANSFER_PHASE_AWAIT_CONFIRMATION,
-                "receiverEmail": parsed_email,
-                "amount": parsed_amount,
-                "description": parsed_description,
-                "riskConfirmationAsked": False,
-                "flowLanguage": flow_language,
-                "shouldRunTransfer": True,
-            }
-
-        if not parsed_email and parsed_amount:
-            msg = "כתובת האימייל של המקבל לא תקינה. תקן את השדה ונסה שוב." if user_language == "he" else "Recipient email is invalid. Please fix the email field and try again."
-            return {
-                **state,
-                "handled": True,
-                "reply": "",
-                "action": build_transfer_form_error_action("receiverEmail", msg, user_language),
+            "workflowResponse": create_workflow_response(
+                message="",
+                action=build_transfer_form_error_action(field, msg, flow_language),
+                next_conversation_state={
+                    "phase": TRANSFER_PHASE_FORM_OPEN,
+                    "receiverEmail": safe_email,
+                    "amount": safe_amount,
+                    "description": description,
+                    "flowLanguage": flow_language,
+                },
+                execution={"executed": False, "operation": "transfer_money", "result": None},
+            ),
+            "transfer": {
+                **(state.get("transfer") or {}),
                 "phase": TRANSFER_PHASE_FORM_OPEN,
-                "receiverEmail": "",
-                "amount": parsed_amount,
-                "description": parsed_description or "",
+                "receiverEmail": safe_email,
+                "amount": safe_amount,
+                "nextTransferState": {"phase": TRANSFER_PHASE_FORM_OPEN, "flowLanguage": flow_language},
+            },
+        }
+
+    async def _parse(user_input, payload, phase):
+        return await get_semantic_transfer_payload(
+            state={
+                "userInput": user_input,
+                "userLanguage": user_language,
                 "flowLanguage": flow_language,
-                "shouldRunTransfer": False,
-            }
-
-        return {
-            **state,
-            "handled": True,
-            "reply": "פתחתי עבורך טופס העברה קצר בתוך הצ׳אט. מלא פרטים ולחץ שלח." if user_language == "he" else "I opened a quick transfer form in the chat. Fill the details and submit.",
-            "action": build_open_transfer_form_action(user_language),
-            "phase": TRANSFER_PHASE_FORM_OPEN,
-            "receiverEmail": "",
-            "amount": None,
-            "description": "",
-            "riskConfirmationAsked": False,
-            "flowLanguage": flow_language,
-            "shouldRunTransfer": False,
-        }
-
-    if phase == TRANSFER_PHASE_FORM_OPEN:
-        parsed_email = semantic_transfer.get("receiverEmail")
-        parsed_amount = semantic_transfer.get("amount")
-        parsed_description = semantic_transfer.get("description", "")
-        missing_field = "receiverEmail" if not parsed_email else "amount"
-        if missing_field == "receiverEmail":
-            message = "כתובת האימייל של המקבל לא תקינה. תקן את השדה בטופס ולחץ שלח." if user_language == "he" else "Recipient email is invalid. Please fix the form field and press Send."
-        else:
-            message = "הסכום לא תקין. תקן את השדה בטופס ולחץ שלח." if user_language == "he" else "Amount is invalid. Please fix the form field and press Send."
-
-        return {
-            **state,
-            "handled": True,
-            "reply": "",
-            "action": build_transfer_form_error_action(missing_field, message, user_language),
-            "phase": TRANSFER_PHASE_FORM_OPEN,
-            "receiverEmail": parsed_email or receiver_email,
-            "amount": parsed_amount if parsed_amount is not None else amount,
-            "description": parsed_description or description,
-            "riskConfirmationAsked": risk_confirmation_asked,
-            "flowLanguage": flow_language,
-            "shouldRunTransfer": False,
-        }
-
-    if phase == TRANSFER_PHASE_AWAIT_CONFIRMATION and semantic_transfer.get("confirmation") != "yes":
-        corrected_email = semantic_transfer.get("receiverEmail")
-        corrected_amount = semantic_transfer.get("amount")
-        corrected_description = semantic_transfer.get("description")
-
-        if corrected_email:
-            receiver_email = corrected_email
-        if corrected_amount is not None:
-            amount = corrected_amount
-        if corrected_description:
-            description = corrected_description
-        if corrected_email or corrected_amount is not None or corrected_description:
-            risk_confirmation_asked = False
-
-        summary = build_transfer_confirmation_summary(
-            language=user_language, amount=amount, receiver_email=receiver_email, description=description
+                "phase": phase,
+                "transferPayload": payload or {},
+                "correction": None,
+            },
+            create_chat_completion=create_chat_completion,
         )
 
-        return {
-            **state,
-            "handled": True,
-            "reply": summary,
-            "action": None,
-            "phase": TRANSFER_PHASE_AWAIT_CONFIRMATION,
-            "receiverEmail": receiver_email,
-            "amount": amount,
-            "description": description,
-            "riskConfirmationAsked": risk_confirmation_asked,
-            "flowLanguage": flow_language,
-            "shouldRunTransfer": False,
-        }
+    # ── 1. Parse initial message ───────────────────────────────────────────
 
-    return {
-        **state,
-        "handled": True,
-        "reply": "",
-        "action": None,
-        "phase": phase,
-        "receiverEmail": receiver_email,
-        "amount": amount,
-        "description": description,
-        "riskConfirmationAsked": risk_confirmation_asked,
-        "flowLanguage": flow_language,
-        "shouldRunTransfer": True,
-    }
+    initial_phase = TRANSFER_PHASE_FORM_OPEN if (receiver_email or amount is not None) else TRANSFER_PHASE_IDLE
+    semantic = await _parse(
+        user_input=state.get("userInput", ""),
+        payload=intent.get("transferPayload") or {},
+        phase=initial_phase,
+    )
 
+    if semantic.get("confirmation") == "no":
+        return _cancel()
 
-async def _validate_transfer_node(state: dict, *, services: dict, user_language: str) -> dict:
-    if state.get("handled") and not state.get("shouldRunTransfer"):
-        return state
+    if semantic.get("startNewTransfer"):
+        receiver_email, amount, description = "", None, ""
+        flow_language = user_language
+        semantic = {}
+    else:
+        if semantic.get("receiverEmail"):
+            receiver_email = semantic["receiverEmail"]
+        if semantic.get("amount") is not None:
+            amount = semantic["amount"]
+        if semantic.get("description"):
+            description = semantic["description"]
+
+    # ── 2. Collect missing details (interrupt until we have email + amount) ─
+
+    while not (receiver_email and amount is not None):
+        resume = interrupt({
+            "type": "open_transfer_form",
+            "message": (
+                "פתחתי עבורך טופס העברה. מלא פרטים ולחץ שלח."
+                if flow_language == "he"
+                else "I opened a transfer form in the chat. Fill in the details and submit."
+            ),
+            "action": build_open_transfer_form_action(flow_language),
+        })
+
+        new_payload = resume.get("transferPayload") or {}
+        new_sem = await _parse(
+            user_input=resume.get("userInput", ""),
+            payload=new_payload,
+            phase=TRANSFER_PHASE_FORM_OPEN,
+        )
+
+        if new_sem.get("confirmation") == "no" or new_payload.get("confirmation") == "no":
+            return _cancel()
+
+        if new_sem.get("receiverEmail"):
+            receiver_email = new_sem["receiverEmail"]
+        if new_sem.get("amount") is not None:
+            amount = new_sem["amount"]
+        if new_sem.get("description"):
+            description = new_sem["description"]
+
+    # ── 3. Validate users and accounts ────────────────────────────────────
+
+    profile_service = (services or {}).get("profileService")
+    account_service = (services or {}).get("accountService")
 
     try:
-        profile_service = (services or {}).get("profileService")
-        account_service = (services or {}).get("accountService")
-
-        sender_user = profile_service.getUserById(str(state["userId"]))
+        sender_user = profile_service.getUserById(user_id) if profile_service else None
         if not sender_user:
-            return {
-                **state,
-                "handled": True,
-                "reply": "לא הצלחתי לזהות את המשתמש המחובר." if user_language == "he" else "I could not identify the authenticated user.",
-                **RESET_TRANSFER_FLOW,
-                "shouldRunTransfer": False,
-                "errorMessage": "sender_user_not_found",
-            }
+            return _error(
+                "לא הצלחתי לזהות את המשתמש המחובר." if flow_language == "he"
+                else "I could not identify the authenticated user."
+            )
 
-        receiver_user = profile_service.getUserByEmail(str(state.get("receiverEmail") or "").lower())
+        receiver_user = profile_service.getUserByEmail(str(receiver_email).lower()) if profile_service else None
         if not receiver_user:
-            msg = "המשתמש לא קיים במערכת. בדוק את כתובת האימייל ונסה שוב." if user_language == "he" else "Recipient user does not exist. Please check the email and try again."
-            return {
-                **state,
-                "handled": True,
-                "reply": "",
-                "action": build_transfer_form_error_action("receiverEmail", msg, user_language),
-                "phase": TRANSFER_PHASE_FORM_OPEN,
-                "receiverEmail": "",
-                "amount": None,
-                "description": "",
-                "shouldRunTransfer": False,
-                "errorMessage": "receiver_user_not_found",
-            }
+            return _form_error(
+                "receiverEmail",
+                "המשתמש לא קיים במערכת. בדוק את כתובת האימייל." if flow_language == "he"
+                else "Recipient user does not exist. Please check the email.",
+            )
 
         if str(receiver_user["_id"]) == str(sender_user["_id"]):
-            msg = "אי אפשר לבצע העברה לעצמך. הזן אימייל של נמען אחר." if user_language == "he" else "You cannot transfer money to yourself. Enter a different recipient email."
-            return {
-                **state,
-                "handled": True,
-                "reply": "",
-                "action": build_transfer_form_error_action("receiverEmail", msg, user_language),
-                "phase": TRANSFER_PHASE_FORM_OPEN,
-                "receiverEmail": "",
-                "amount": None,
-                "description": "",
-                "shouldRunTransfer": False,
-                "errorMessage": "self_transfer",
-            }
+            return _form_error(
+                "receiverEmail",
+                "אי אפשר לבצע העברה לעצמך. הזן אימייל של נמען אחר." if flow_language == "he"
+                else "You cannot transfer money to yourself.",
+            )
 
-        sender_account = await account_service.get_account_by_user_id(str(sender_user["_id"]))
-        receiver_account = await account_service.get_account_by_user_id(str(receiver_user["_id"]))
+        sender_account = await account_service.get_account_by_user_id(str(sender_user["_id"])) if account_service else None
+        receiver_account = await account_service.get_account_by_user_id(str(receiver_user["_id"])) if account_service else None
 
         if not sender_account or not receiver_account:
-            return {
-                **state,
-                "handled": True,
-                "reply": "לא נמצא חשבון מקור או יעד לביצוע ההעברה." if user_language == "he" else "Source or target account was not found.",
-                **RESET_TRANSFER_FLOW,
-                "shouldRunTransfer": False,
-                "errorMessage": "account_not_found",
-            }
-
-        requested_amount = float(state.get("amount") or 0)
-        sender_balance = float(sender_account.get("balance") or 0)
-
-        if not (requested_amount > 0 and requested_amount <= sender_balance):
-            msg = (
-                f"אין מספיק יתרה להעברה: ביקשת {requested_amount} ILS, יתרה זמינה {sender_balance} ILS."
-                if user_language == "he"
-                else f"Insufficient balance: requested {requested_amount} ILS, available {sender_balance} ILS."
+            return _error(
+                "לא נמצא חשבון מקור או יעד." if flow_language == "he"
+                else "Source or target account was not found."
             )
-            return {
-                **state,
-                "handled": True,
-                "reply": "",
-                "action": build_transfer_form_error_action("amount", msg, user_language),
-                "phase": TRANSFER_PHASE_FORM_OPEN,
-                "receiverEmail": str(state.get("receiverEmail") or ""),
-                "description": str(state.get("description") or ""),
-                "amount": None,
-                "shouldRunTransfer": False,
-                "errorMessage": "insufficient_funds",
-            }
 
-        return {
-            **state,
-            "senderUser": sender_user,
-            "receiverUser": receiver_user,
-            "senderAccount": sender_account,
-            "receiverAccount": receiver_account,
-            "riskRulesAndLimits": RISK_RULES_AND_LIMITS,
-            "errorMessage": None,
-        }
+        sender_balance = float(sender_account.get("balance") or 0)
+        if not (float(amount) > 0 and float(amount) <= sender_balance):
+            return _form_error(
+                "amount",
+                f"אין מספיק יתרה: ביקשת {amount} ILS, יתרה זמינה {sender_balance} ILS."
+                if flow_language == "he"
+                else f"Insufficient balance: requested {amount} ILS, available {sender_balance} ILS.",
+            )
 
     except Exception as err:
-        return {
-            **state,
-            "handled": True,
-            "reply": f"Transfer failed: {err}",
-            **RESET_TRANSFER_FLOW,
-            "shouldRunTransfer": False,
-            "errorMessage": "evaluate_account_failure",
-        }
+        return _error(
+            f"ההעברה נכשלה: {err}" if flow_language == "he" else f"Transfer failed: {err}"
+        )
 
-
-async def _risk_check_node(state: dict, *, services: dict) -> dict:
-    if state.get("handled") and not state.get("shouldRunTransfer"):
-        return state
-
-    user_language = state.get("flowLanguage", "en")
-    amount = float(state.get("amount") or 0)
-    risk_confirmation_asked = bool(state.get("riskConfirmationAsked"))
-
-    if amount > EXTRA_CONFIRMATION_THRESHOLD and not risk_confirmation_asked:
-        return {
-            **state,
-            "handled": True,
-            "reply": "",
-            "action": build_high_amount_confirm_action(user_language, amount),
-            "phase": TRANSFER_PHASE_AWAIT_CONFIRMATION,
-            "riskConfirmationAsked": True,
-            "shouldRunTransfer": False,
-        }
+    # ── 4. Risk check ──────────────────────────────────────────────────────
 
     risk_service = (services or {}).get("riskService")
-    sender_user = state.get("senderUser") or {}
-    receiver_user = state.get("receiverUser") or {}
-    sender_account = state.get("senderAccount") or {}
-
+    risk_assessment = {"requiresReview": False}
     if risk_service:
-        risk_assessment = risk_service.evaluateRisk({
-            "senderEmail": str(sender_user.get("email") or "").lower(),
-            "receiverEmail": str(receiver_user.get("email") or "").lower(),
-            "amount": amount,
-            "senderBalance": sender_account.get("balance"),
-        })
-    else:
-        risk_assessment = {"requiresReview": False, "score": 0, "level": "LOW", "reasons": []}
+        try:
+            risk_assessment = risk_service.evaluateRisk({
+                "senderEmail": str(sender_user.get("email") or "").lower(),
+                "receiverEmail": str(receiver_user.get("email") or "").lower(),
+                "amount": float(amount),
+                "senderBalance": sender_account.get("balance"),
+            })
+        except Exception:
+            pass
 
     if risk_assessment.get("requiresReview"):
         reasons = ", ".join(risk_assessment.get("reasons") or []) or "Policy checks"
-        return {
-            **state,
-            "handled": True,
-            "reply": f"ההעברה סומנה בסיכון גבוה ונשלחה לבדיקה ידנית. סיבה: {reasons}." if user_language == "he" else f"This transfer was flagged as high risk and sent to manual review. Reason: {reasons}.",
-            "riskAssessment": risk_assessment,
-            **RESET_TRANSFER_FLOW,
-            "shouldRunTransfer": False,
-            "transferExecuted": False,
-        }
+        return _error(
+            f"ההעברה סומנה בסיכון גבוה ונשלחה לבדיקה ידנית. סיבה: {reasons}." if flow_language == "he"
+            else f"This transfer was flagged as high risk and sent to manual review. Reason: {reasons}."
+        )
 
-    return {**state, "riskAssessment": risk_assessment}
+    # ── 5. High-amount confirmation ────────────────────────────────────────
 
+    if float(amount) > EXTRA_CONFIRMATION_THRESHOLD:
+        resume = interrupt({
+            "type": "high_amount_confirm",
+            "action": build_high_amount_confirm_action(flow_language, amount),
+        })
+        confirm_sem = await _parse(
+            user_input=resume.get("userInput", ""),
+            payload={"confirmation": (resume.get("transferPayload") or {}).get("confirmation")},
+            phase=TRANSFER_PHASE_AWAIT_CONFIRMATION,
+        )
+        if confirm_sem.get("confirmation") != "yes":
+            return _cancel()
 
-async def _execute_transfer_node(state: dict, *, services: dict) -> dict:
-    transaction_service = (services or {}).get("transactionService")
-    user_language = state.get("flowLanguage", "en")
+    # ── 6. Final summary confirmation ──────────────────────────────────────
+
+    summary = build_transfer_confirmation_summary(
+        language=flow_language, amount=amount,
+        receiver_email=receiver_email, description=description,
+    )
+    resume = interrupt({
+        "type": "confirm_transfer",
+        "message": summary,
+    })
+    confirm_sem = await _parse(
+        user_input=resume.get("userInput", ""),
+        payload={"confirmation": (resume.get("transferPayload") or {}).get("confirmation")},
+        phase=TRANSFER_PHASE_AWAIT_CONFIRMATION,
+    )
+    if confirm_sem.get("confirmation") != "yes":
+        return _cancel()
+
+    # ── 7. Execute ─────────────────────────────────────────────────────────
 
     try:
+        transaction_service = (services or {}).get("transactionService")
         if not transaction_service:
             raise ValueError("Transfer service unavailable")
 
         transaction = await transaction_service.execute_transfer(
-            from_account_id=state["senderAccount"]["_id"],
-            to_account_id=state["receiverAccount"]["_id"],
-            amount=float(state["amount"]),
-            description=state.get("description") or None,
+            from_account_id=sender_account["_id"],
+            to_account_id=receiver_account["_id"],
+            amount=float(amount),
+            description=description or None,
         )
 
-        updated_sender = await (services.get("accountService")).find_account_by_id(state["senderAccount"]["_id"]) if services.get("accountService") else state["senderAccount"]
+        updated_sender = (
+            await account_service.find_account_by_id(sender_account["_id"])
+            if account_service else None
+        )
+        remaining_balance = float((updated_sender or sender_account).get("balance") or 0)
 
-        return {
-            **state,
-            "transferExecuted": True,
-            "transactionResult": transaction,
-            "senderAccount": updated_sender or state["senderAccount"],
-            "reply": f"ההעברה בוצעה בהצלחה: {format_ils(state['amount'])} ILS ל־{state['receiverEmail']}." if user_language == "he" else f"Transfer completed: {format_ils(state['amount'])} ILS to {state['receiverEmail']}.",
-        }
     except Exception as err:
-        return {
-            **state,
-            "handled": True,
-            "reply": f"ההעברה נכשלה: {err}" if user_language == "he" else f"Transfer failed: {err}",
-            **RESET_TRANSFER_FLOW,
-            "shouldRunTransfer": False,
-            "transferExecuted": False,
-            "errorMessage": "execute_transfer_failure",
-        }
+        return _error(
+            f"ההעברה נכשלה: {err}" if flow_language == "he" else f"Transfer failed: {err}"
+        )
 
+    # ── 8. Build success response ──────────────────────────────────────────
 
-async def _build_response_node(state: dict, *, services: dict) -> dict:
-    if state.get("handled") and not state.get("transferExecuted"):
-        return state
-
-    if not state.get("transferExecuted"):
-        return {**state, "suggestions": []}
-
-    language = state.get("flowLanguage", "en")
-    remaining_balance = float((state.get("senderAccount") or {}).get("balance") or 0)
     suggestions = []
-
-    low_balance_sug = build_low_balance_suggestion(language, remaining_balance)
-    if low_balance_sug:
-        suggestions.append(low_balance_sug)
+    low_sug = build_low_balance_suggestion(flow_language, remaining_balance)
+    if low_sug:
+        suggestions.append(low_sug)
 
     try:
         from datetime import datetime, timezone, timedelta
-        transaction_service = (services or {}).get("transactionService")
         one_month_ago = datetime.now(timezone.utc) - timedelta(days=30)
-        sender_email = str((state.get("senderUser") or {}).get("email") or "").lower()
-        monthly_count = await transaction_service.count_monthly_outgoing_transfers(email=sender_email, since=one_month_ago) if transaction_service else 0
+        monthly_count = await transaction_service.count_monthly_outgoing_transfers(
+            email=str(sender_user.get("email") or "").lower(),
+            since=one_month_ago,
+        ) if transaction_service else 0
         if monthly_count >= 10:
             suggestions.append(
-                "ראיתי נפח העברות גבוה בחודש האחרון. רוצה שאציע לך תקרת תקציב חודשית?" if language == "he"
-                else "You had high transfer activity in the last month. Want me to suggest a monthly transfer budget cap?"
+                "ראיתי נפח העברות גבוה בחודש האחרון. רוצה שאציג לך תקרת תקציב חודשית?" if flow_language == "he"
+                else "You had high transfer activity. Want me to suggest a monthly transfer budget cap?"
             )
     except Exception:
         pass
 
+    reply = build_transfer_success_reply(
+        language=flow_language,
+        amount=amount,
+        receiver_email=receiver_email,
+        balance=remaining_balance,
+        suggestions=suggestions,
+    )
+
+    workflow_response = create_executed_workflow_response(
+        message=reply,
+        action=None,
+        next_conversation_state=None,
+        operation="transfer_money",
+        result={"transaction": transaction, "suggestions": suggestions},
+    )
+
     return {
         **state,
-        "reply": build_transfer_success_reply(
-            language=language,
-            amount=state.get("amount"),
-            receiver_email=state.get("receiverEmail", ""),
-            balance=(state.get("senderAccount") or {}).get("balance"),
-            suggestions=suggestions,
-        ),
-        "suggestions": suggestions,
-        **RESET_TRANSFER_FLOW,
-        "shouldRunTransfer": False,
-    }
-
-
-def build_next_transfer_state(result: dict) -> dict:
-    action = result.get("action") or {}
-    error_message = result.get("errorMessage")
-    phase = result.get("phase") or TRANSFER_PHASE_IDLE
-    last_validation_error = None
-
-    if isinstance(action, dict) and action.get("type") == "transfer_form_error":
-        last_validation_error = {
-            "field": action.get("field", "unknown"),
-            "message": action.get("message", ""),
-            "code": error_message,
-        }
-    elif error_message and phase != TRANSFER_PHASE_IDLE:
-        last_validation_error = {
-            "field": "unknown",
-            "message": str(error_message),
-            "code": error_message,
-        }
-
-    return {
-        "phase": phase,
-        "receiverEmail": result.get("receiverEmail", ""),
-        "amount": result.get("amount"),
-        "description": result.get("description", ""),
-        "riskConfirmationAsked": bool(result.get("riskConfirmationAsked")),
-        "flowLanguage": result.get("flowLanguage", ""),
-        "lastValidationError": last_validation_error,
+        "workflowResponse": workflow_response,
+        "execution": workflow_response["execution"],
+        "transfer": {**(state.get("transfer") or {}), **RESET_TRANSFER_FLOW, "nextTransferState": None},
     }

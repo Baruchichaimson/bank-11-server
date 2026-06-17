@@ -31,9 +31,9 @@ async def generate_assistant_reply(
     user_id: str,
     user_email: str = None,
     history: list = None,
-    transfer_state: dict = None,
     transfer_payload: dict = None,
     abort_signal=None,
+    thread_id: str = None,
 ) -> dict:
     trimmed = str(user_input or "").strip()
     user_language = detect_language(trimmed)
@@ -43,7 +43,7 @@ async def generate_assistant_reply(
         return {
             "reply": reply,
             "nextHistory": history or [],
-            "nextTransferState": transfer_state,
+            "nextTransferState": None,
             "action": None,
         }
 
@@ -58,11 +58,11 @@ async def generate_assistant_reply(
             user_id=user_id,
             user_email=user_email,
             history=short_history,
-            transfer_state=transfer_state,
             transfer_payload=transfer_payload,
             create_chat_completion=chat_completion_fn,
             services=services,
             abort_signal=abort_signal,
+            thread_id=thread_id,
         )
     except Exception as err:
         sys.stderr.write(f"[chat_assistant] ERROR in run_banking_graph: {err}\n")
@@ -77,6 +77,6 @@ async def generate_assistant_reply(
             history=short_history,
             user_text=trimmed,
             reply=fallback_reply,
-            transfer_state=transfer_state,
+            transfer_state=None,
             action=None,
         )
