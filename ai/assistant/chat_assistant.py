@@ -2,6 +2,7 @@
 Chat assistant — port of chatAssistant.js.
 """
 
+import asyncio
 import sys
 import traceback
 
@@ -16,13 +17,7 @@ async def _create_chat_completion(payload: dict):
     kwargs = {k: v for k, v in payload.items() if k not in ("abortSignal",)}
     if "model" not in kwargs:
         kwargs["model"] = OPENAI_MODEL
-    return await _run_in_executor(openai_client.chat.completions.create, **kwargs)
-
-
-async def _run_in_executor(fn, **kwargs):
-    import asyncio
-    loop = asyncio.get_event_loop()
-    return await loop.run_in_executor(None, lambda: fn(**kwargs))
+    return await openai_client.chat.completions.create(**kwargs)
 
 
 async def generate_assistant_reply(
@@ -64,6 +59,8 @@ async def generate_assistant_reply(
             abort_signal=abort_signal,
             thread_id=thread_id,
         )
+    except asyncio.CancelledError:
+        raise
     except Exception as err:
         sys.stderr.write(f"[chat_assistant] ERROR in run_banking_graph: {err}\n")
         sys.stderr.write(traceback.format_exc())

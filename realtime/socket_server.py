@@ -2,14 +2,12 @@
 Socket.IO server — port of socketServer.js.
 
 Uses Flask-SocketIO (eventlet/gevent async mode).
-Cancellation note: Python does not have native AbortController like JS.
-We simulate cancellation with a per-request cancelled flag stored in a dict.
-Concurrent LLM requests per socket are tracked; setting the flag causes the
-result to be discarded after the async call returns. True mid-stream cancellation
-is not available without streaming support.
+Each chat request runs on a dedicated asyncio loop in a background greenlet so
+the Socket.IO cancel event can cancel the running asyncio task.
 """
 
 import re
+import sys
 import threading
 from datetime import datetime, timezone
 
@@ -33,6 +31,41 @@ socketio: SocketIO | None = None
 def _debug(*args):
     if SOCKET_DEBUG:
         print(*args)
+
+
+def _log_socket(message: str):
+    sys.stderr.write(f"[socket] {message}\n")
+    sys.stderr.flush()
+
+
+def _cancel_active_chat_request(request_state: dict, *, request_id: str):
+    request_state["cancelled"] = True
+    task = request_state.get("task")
+    loop = request_state.get("loop")
+    scheduled_task_cancel = False
+
+    if task is not None and loop is not None and not task.done():
+        try:
+            loop.call_soon_threadsafe(task.cancel)
+            scheduled_task_cancel = True
+        except RuntimeError:
+            scheduled_task_cancel = False
+
+    if scheduled_task_cancel:
+        return
+
+    greenlet = request_state.get("greenlet")
+    if greenlet is None or not hasattr(greenlet, "kill"):
+        return
+
+    try:
+        is_ready = greenlet.ready() if hasattr(greenlet, "ready") else False
+        if not is_ready:
+            greenlet.kill(block=False)
+    except TypeError:
+        greenlet.kill()
+    except Exception as err:
+        _log_socket(f"request cancel fallback failed requestId={request_id} error={err}")
 
 
 def _normalize_email(value: str) -> str:
@@ -129,7 +162,7 @@ def init_socket_server(app, flask_app) -> SocketIO:
             _connection_state[sid] = {
                 "user": user_obj,
                 "history": [],
-                "active_requests": {},  # requestId -> cancelled flag dict
+                "active_requests": {},  # requestId -> request state dict
             }
             _debug("SOCKET AUTH SUCCESS", user_obj["id"])
 
@@ -146,9 +179,11 @@ def init_socket_server(app, flask_app) -> SocketIO:
         user = conn.get("user") or {}
         normalized = _normalize_email(user.get("email", ""))
 
-        # cancel all active requests
-        for flag in conn.get("active_requests", {}).values():
-            flag["cancelled"] = True
+        # cancel all active chat requests
+        active_requests = conn.get("active_requests", {})
+        for request_id, request_state in list(active_requests.items()):
+            _cancel_active_chat_request(request_state, request_id=request_id)
+        active_requests.clear()
 
         with _lock:
             sids = _user_sockets.get(normalized, set())
@@ -172,32 +207,45 @@ def init_socket_server(app, flask_app) -> SocketIO:
     @socketio.on("chat_message")
     def on_chat_message(payload):
         import asyncio
-        import sys
         from flask import request as freq
         sid = freq.sid
         conn = _connection_state.get(sid)
-        sys.stderr.write(f"[socket] chat_message received sid={sid} conn={'yes' if conn else 'NO'}\n")
-        sys.stderr.flush()
         if not conn:
             return
 
         payload = payload or {}
         request_id = str(payload.get("requestId") or datetime.now(timezone.utc).timestamp())
-        flag = {"cancelled": False}
-        conn["active_requests"][request_id] = flag
+        _log_socket(f"chat_message start sid={sid} requestId={request_id}")
+
+        existing = conn["active_requests"].pop(request_id, None)
+        if existing:
+            _cancel_active_chat_request(existing, request_id=request_id)
+
+        request_state = {
+            "cancelled": False,
+            "loop": None,
+            "task": None,
+            "greenlet": None,
+        }
+        conn["active_requests"][request_id] = request_state
 
         text = str(payload.get("message") or "").strip()
         if not text:
+            _log_socket(f"chat_error emitted requestId={request_id} reason=message_required")
             socketio.emit("chat_error", {"requestId": request_id, "message": "Message is required"}, to=sid)
             conn["active_requests"].pop(request_id, None)
             return
 
         if len(text) > 2000:
+            _log_socket(f"chat_error emitted requestId={request_id} reason=message_too_long")
             socketio.emit("chat_error", {"requestId": request_id, "message": "Message is too long"}, to=sid)
             conn["active_requests"].pop(request_id, None)
             return
 
         transfer_payload = _normalize_transfer_payload(payload.get("transferPayload"))
+
+        def _is_cancelled() -> bool:
+            return request_state.get("cancelled") or conn["active_requests"].get(request_id) is not request_state
 
         async def _run():
             from ai.assistant.chat_assistant import generate_assistant_reply
@@ -210,19 +258,23 @@ def init_socket_server(app, flask_app) -> SocketIO:
                     transfer_payload=transfer_payload,
                     thread_id=sid,
                 )
-                if flag["cancelled"]:
+                if _is_cancelled():
                     return
 
                 conn["history"] = result.get("nextHistory") or conn["history"]
 
+                _log_socket(f"bot_reply emitted requestId={request_id}")
                 socketio.emit("bot_reply", {
                     "requestId": request_id,
                     "message": result.get("reply", ""),
                     "action": result.get("action"),
                     "nextTransferState": result.get("nextTransferState"),
                 }, to=sid)
+            except asyncio.CancelledError:
+                request_state["cancelled"] = True
+                raise
             except Exception as err:
-                if flag["cancelled"]:
+                if _is_cancelled():
                     return
                 err_str = str(err)
                 if "abort" in err_str.lower():
@@ -232,12 +284,34 @@ def init_socket_server(app, flask_app) -> SocketIO:
                     if IS_PRODUCTION and not ASSISTANT_DEBUG_ERRORS
                     else f"Assistant error: {err_str}"
                 )
+                _log_socket(f"chat_error emitted requestId={request_id} error={err_str}")
                 socketio.emit("chat_error", {"requestId": request_id, "message": msg}, to=sid)
                 print(f"Socket assistant error: {err_str}")
             finally:
-                conn["active_requests"].pop(request_id, None)
+                if conn["active_requests"].get(request_id) is request_state:
+                    conn["active_requests"].pop(request_id, None)
 
-        socketio.start_background_task(lambda: asyncio.run(_run()))
+        def _run_background():
+            loop = asyncio.new_event_loop()
+            request_state["loop"] = loop
+            asyncio.set_event_loop(loop)
+            try:
+                if request_state["cancelled"]:
+                    return
+                task = loop.create_task(_run())
+                request_state["task"] = task
+                loop.run_until_complete(task)
+            except asyncio.CancelledError:
+                request_state["cancelled"] = True
+            finally:
+                if conn["active_requests"].get(request_id) is request_state:
+                    conn["active_requests"].pop(request_id, None)
+                request_state["task"] = None
+                request_state["loop"] = None
+                asyncio.set_event_loop(None)
+                loop.close()
+
+        request_state["greenlet"] = socketio.start_background_task(_run_background)
 
     @socketio.on("cancel_chat_message")
     def on_cancel_chat_message(payload):
@@ -249,10 +323,13 @@ def init_socket_server(app, flask_app) -> SocketIO:
         request_id = str((payload or {}).get("requestId") or "")
         if not request_id:
             return
-        flag = conn["active_requests"].get(request_id)
-        if flag:
-            flag["cancelled"] = True
-            conn["active_requests"].pop(request_id, None)
+        request_state = conn["active_requests"].pop(request_id, None)
+        if not request_state:
+            _log_socket(f"request cancel ignored requestId={request_id} reason=not_found")
+            return
+        _cancel_active_chat_request(request_state, request_id=request_id)
+        _log_socket(f"request canceled requestId={request_id}")
+        socketio.emit("chat_canceled", {"requestId": request_id}, to=sid)
 
     @socketio.on("call_request")
     def on_call_request(payload):
@@ -411,5 +488,3 @@ def _normalize_transfer_payload(value) -> dict | None:
         "skipDescription": bool(value.get("skipDescription")),
         "startNewTransfer": bool(value.get("startNewTransfer")),
     }
-
-

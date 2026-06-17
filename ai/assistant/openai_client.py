@@ -2,7 +2,7 @@
 OpenAI/Ollama/Groq client — port of openaiClient.js.
 """
 
-from openai import OpenAI
+from openai import AsyncOpenAI
 from config.settings import (
     AI_PROVIDER,
     OPENAI_API_KEY, OPENAI_MODEL, OPENAI_BASE_URL, OPENAI_FALLBACK_MODEL,
@@ -45,4 +45,4 @@ _client_kwargs: dict = {"api_key": _config["api_key"]}
 if _config["base_url"]:
     _client_kwargs["base_url"] = _config["base_url"]
 
-openai_client: OpenAI | None = OpenAI(**_client_kwargs) if has_openai_key else None
+openai_client: AsyncOpenAI | None = AsyncOpenAI(**_client_kwargs) if has_openai_key else None

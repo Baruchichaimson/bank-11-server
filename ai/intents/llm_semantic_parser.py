@@ -2,6 +2,7 @@
 LLM semantic parser — port of llmSemanticParser.js.
 """
 
+import asyncio
 import json
 import re
 import sys
@@ -416,6 +417,8 @@ async def parse_query_with_llm(*, user_input: str, history: list, create_chat_co
             sys.stderr.flush()
             return None
         return validated
+    except asyncio.CancelledError:
+        raise
     except Exception as err:
         sys.stderr.write(f"[LLM Parser] Error: {err}\n")
         sys.stderr.flush()
