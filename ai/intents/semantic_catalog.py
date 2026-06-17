@@ -145,7 +145,7 @@ _COMPACT_ROUTER_CONTRACT = {
             "intent": "recent_transactions",
             "semanticQueryRequired": True,
             "chooseWhen": "past activity, transaction history, list/count/filter transfers, העברות שביצעתי, פעולות אחרונות, כמה העברות",
-            "doNotChooseWhen": "starting, confirming, correcting, or canceling a new transfer",
+            "doNotChooseWhen": "balance/current money/current account balance questions, or starting/confirming/correcting/canceling a new transfer",
             "semanticQuery": {
                 "domain": "transactions",
                 "intent": "transactions_query",

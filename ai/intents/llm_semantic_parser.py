@@ -6,6 +6,7 @@ import asyncio
 import json
 import re
 import sys
+import time
 from ai.intents.semantic_catalog import (
     ALLOWED_DOMAINS, ALLOWED_INTENTS, ALLOWED_TOOL_NAMES, TOOL_BY_NAME,
     ALLOWED_AGGREGATIONS, ALLOWED_ACTIONS, ALLOWED_TYPES, ALLOWED_DIRECTIONS,
@@ -14,6 +15,7 @@ from ai.intents.semantic_catalog import (
 )
 from ai.intents.llm_prompt_payload_builder import build_user_prompt_payload, get_current_date_for_prompt
 from ai.contracts.intent_result_contract import create_intent_result, create_ambiguous_intent
+from config.settings import ASSISTANT_DEBUG_ERRORS
 
 DOMAIN_ALIASES = {
     "balance": "account", "account_balance": "account",
@@ -312,6 +314,56 @@ def validate_llm_semantic_parse(payload: dict | None) -> dict | None:
     return None
 
 
+def _describe_semantic_query_validation_failure(raw) -> str:
+    if not raw or not isinstance(raw, dict):
+        return "recent_transactions requires semanticQuery object"
+    if raw.get("domain") != "transactions" or raw.get("intent") != "transactions_query":
+        return "semanticQuery must have domain=transactions and intent=transactions_query"
+    if _has_date_range_input(raw.get("dateRange")) and not _validate_date_range(raw.get("dateRange")):
+        return "semanticQuery.dateRange is invalid"
+    if raw.get("aggregation") == "counterparty" and not _normalize_string_field(raw.get("recipientName")):
+        return "counterparty aggregation requires recipientName"
+    return "semanticQuery failed validation"
+
+
+def _describe_validation_failure(payload: dict | None) -> str:
+    if not payload or not isinstance(payload, dict):
+        return "LLM output must be a JSON object"
+
+    raw_tool = payload.get("tool") if isinstance(payload.get("tool"), dict) else None
+    tool_name = _normalize_tool_name(
+        payload.get("toolName") or (raw_tool or {}).get("name") or payload.get("tool") or payload.get("name")
+    )
+    raw_tool_args = payload.get("toolArgs") or (raw_tool or {}).get("args") or payload.get("args") or {}
+    tool_args = raw_tool_args if isinstance(raw_tool_args, dict) else {}
+
+    domain = _normalize_domain(payload.get("domain"), tool_name)
+    intent = _normalize_intent(payload.get("intent"), tool_name)
+    model_confidence = _normalize_confidence(payload.get("confidence"))
+
+    if model_confidence is not None and model_confidence < 0.65:
+        return "confidence below routing threshold"
+
+    if domain == "unknown" or intent == "unknown":
+        return f"domain or intent normalized to unknown (domain={domain}, intent={intent})"
+
+    if domain == "transactions" and intent == "recent_transactions":
+        raw_sq = payload.get("semanticQuery") if isinstance(payload.get("semanticQuery"), dict) else None
+        if not raw_sq and tool_name:
+            raw_sq = _build_legacy_semantic_query_from_tool(tool_name, tool_args)
+        return _describe_semantic_query_validation_failure(raw_sq)
+
+    expected_by_domain = {
+        "profile": "show_personal_details",
+        "account": "check_balance",
+        "support": "contact_support",
+    }
+    if domain in expected_by_domain and expected_by_domain[domain] != intent:
+        return f"domain/intent mismatch (domain={domain}, intent={intent}, expected={expected_by_domain[domain]})"
+
+    return f"unsupported domain/intent combination (domain={domain}, intent={intent}, toolName={tool_name})"
+
+
 def build_semantic_parser_prompt() -> str:
     current_date = get_current_date_for_prompt()
     return f"""
@@ -331,6 +383,10 @@ Semantic intent contract:
 
 Core routing:
 - classify by the meaning of the requested action, not by keyword overlap.
+- currentUserMessage is authoritative.
+- Use recentConversation only for incomplete follow-up messages.
+- If currentUserMessage is a complete standalone banking request, ignore previous conversation for routing.
+- Never classify a clear balance/current money question as transaction history because previous messages discussed transactions.
 - Prefer semantic intent/query fields over toolName.
 - balance/current money => domain account, intent check_balance, semanticQuery null, toolName null.
 - past activity/history/list/count/filter existing transactions => domain transactions, intent recent_transactions.
@@ -370,6 +426,20 @@ Date extraction:
 - Keep semanticQuery.timeRange=null. Never return database filters, createdAt, or Date objects.
 
 Examples:
+- User: "מה היתרה שלי?"
+  JSON: {{"domain":"account","intent":"check_balance","confidence":0.98,"semanticQuery":null,"toolName":null}}
+- User: "כמה כסף יש לי בחשבון?"
+  JSON: {{"domain":"account","intent":"check_balance","confidence":0.98,"semanticQuery":null,"toolName":null}}
+- User: "תראה לי את היתרה"
+  JSON: {{"domain":"account","intent":"check_balance","confidence":0.98,"semanticQuery":null,"toolName":null}}
+- User: "what is my balance?"
+  JSON: {{"domain":"account","intent":"check_balance","confidence":0.98,"semanticQuery":null,"toolName":null}}
+- User: "תראה לי את ההעברות האחרונות"
+  JSON: {{"domain":"transactions","intent":"recent_transactions","confidence":0.95,"semanticQuery":{{"domain":"transactions","intent":"transactions_query","action":"transfer_money","filters":{{"type":"transfer"}},"timeRange":null,"aggregation":"list","limit":null,"sortDirection":"desc"}}}}
+- User: "מה ההעברה האחרונה שביצעתי?"
+  JSON: {{"domain":"transactions","intent":"recent_transactions","confidence":0.95,"semanticQuery":{{"domain":"transactions","intent":"transactions_query","action":"transfer_money","filters":{{"type":"transfer","direction":"outgoing"}},"timeRange":null,"aggregation":"first_n","limit":1,"sortDirection":"desc"}}}}
+- recentConversation discussed transfers, current user: "מה היתרה שלי?"
+  JSON: {{"domain":"account","intent":"check_balance","confidence":0.98,"semanticQuery":null,"toolName":null}}
 - User: "תתקשר לנציג"
   JSON: {{"domain":"support","intent":"contact_support","confidence":0.95,"semanticQuery":null,"toolName":null}}
 - User: "אני רוצה לדבר עם נציג"
@@ -393,6 +463,11 @@ async def parse_query_with_llm(*, user_input: str, history: list, create_chat_co
     if not create_chat_completion:
         return None
 
+    start = time.perf_counter()
+    if ASSISTANT_DEBUG_ERRORS:
+        sys.stderr.write("[LLM Parser] parse_query_with_llm start\n")
+        sys.stderr.flush()
+
     try:
         system_prompt = build_semantic_parser_prompt()
         import json
@@ -413,7 +488,10 @@ async def parse_query_with_llm(*, user_input: str, history: list, create_chat_co
         parsed = json.loads(raw_content.strip())
         validated = validate_llm_semantic_parse(parsed)
         if not validated:
-            sys.stderr.write(f"[LLM Parser] Validation failed for: {raw_content[:200]}\n")
+            reason = _describe_validation_failure(parsed)
+            sys.stderr.write(f"[LLM Parser] Validation failed: {reason}\n")
+            if ASSISTANT_DEBUG_ERRORS:
+                sys.stderr.write(f"[LLM Parser] Raw LLM JSON: {raw_content}\n")
             sys.stderr.flush()
             return None
         return validated
@@ -423,3 +501,8 @@ async def parse_query_with_llm(*, user_input: str, history: list, create_chat_co
         sys.stderr.write(f"[LLM Parser] Error: {err}\n")
         sys.stderr.flush()
         return None
+    finally:
+        if ASSISTANT_DEBUG_ERRORS:
+            duration_ms = (time.perf_counter() - start) * 1000
+            sys.stderr.write(f"[LLM Parser] parse_query_with_llm end duration_ms={duration_ms:.1f}\n")
+            sys.stderr.flush()

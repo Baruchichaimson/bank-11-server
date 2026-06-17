@@ -1,8 +1,12 @@
 from datetime import datetime, timezone
 
-MAX_CONTEXT_MESSAGES = 6
+MAX_CONTEXT_MESSAGES = 3
 MAX_CONTEXT_CHARS = 700
 DEFAULT_ASSISTANT_TIME_ZONE = "Asia/Jerusalem"
+ROUTING_INSTRUCTION = (
+    "currentUserMessage overrides recentConversation unless it is a short incomplete follow-up; "
+    "if currentUserMessage is a complete standalone banking request, ignore previous conversation for routing"
+)
 
 
 def get_current_date_for_prompt() -> str:
@@ -34,4 +38,5 @@ def build_user_prompt_payload(*, user_input: str, history: list) -> dict:
         "timeZone": DEFAULT_ASSISTANT_TIME_ZONE,
         "currentUserMessage": str(user_input or "").strip(),
         "recentConversation": sanitize_history_for_prompt(history),
+        "routingInstruction": ROUTING_INSTRUCTION,
     }
