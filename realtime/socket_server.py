@@ -255,31 +255,26 @@ def init_socket_server(app, flask_app) -> SocketIO:
             conn["active_requests"].pop(request_id, None)
 
     @socketio.on("call_request")
-    def on_call_request(payload, ack=None):
+    def on_call_request(payload):
         from flask import request as freq
-        acknowledge = ack if callable(ack) else lambda x: None
         sid = freq.sid
         conn = _connection_state.get(sid)
         if not conn:
-            acknowledge({"ok": False, "message": "Not connected"})
-            return
+            return {"ok": False, "message": "Not connected"}
 
         try:
             to_email = _normalize_email((payload or {}).get("toEmail", ""))
             from_email = _normalize_email(conn["user"]["email"])
 
             if not to_email or "@" not in to_email:
-                acknowledge({"ok": False, "message": "Invalid recipient email"})
-                return
+                return {"ok": False, "message": "Invalid recipient email"}
 
             if to_email == from_email:
-                acknowledge({"ok": False, "message": "Cannot call your own email"})
-                return
+                return {"ok": False, "message": "Cannot call your own email"}
 
             recipient = find_verified_user_by_email(to_email)
             if not recipient:
-                acknowledge({"ok": False, "message": "Recipient not found or not verified"})
-                return
+                return {"ok": False, "message": "Recipient not found or not verified"}
 
             import random
             import string
@@ -295,8 +290,7 @@ def init_socket_server(app, flask_app) -> SocketIO:
             }, to_email)
 
             if delivered == 0:
-                acknowledge({"ok": False, "message": "Recipient is offline right now"})
-                return
+                return {"ok": False, "message": "Recipient is offline right now"}
 
             call_payload = {
                 "callId": call_id,
@@ -309,8 +303,6 @@ def init_socket_server(app, flask_app) -> SocketIO:
             }
             with _lock:
                 _pending_calls[call_id] = call_payload
-
-            acknowledge({"ok": True, "callId": call_id, "roomName": room_name, "toEmail": to_email})
 
             def _timeout():
                 with _lock:
@@ -326,37 +318,36 @@ def init_socket_server(app, flask_app) -> SocketIO:
             t.daemon = True
             t.start()
 
+            return {"ok": True, "callId": call_id, "roomName": room_name, "toEmail": to_email}
+
         except Exception:
-            acknowledge({"ok": False, "message": "Could not start the call"})
+            return {"ok": False, "message": "Could not start the call"}
 
     @socketio.on("call_accept")
-    def on_call_accept(payload, ack=None):
+    def on_call_accept(payload):
         from flask import request as freq
-        acknowledge = ack if callable(ack) else lambda x: None
         sid = freq.sid
         conn = _connection_state.get(sid)
         if not conn:
-            acknowledge({"ok": False, "message": "Not connected"})
-            return
+            return {"ok": False, "message": "Not connected"}
 
         call_id = str((payload or {}).get("callId") or "")
         with _lock:
             call = _pending_calls.get(call_id)
 
         if not call or call.get("status") != "pending":
-            acknowledge({"ok": False, "message": "Call is no longer available"})
-            return
+            return {"ok": False, "message": "Call is no longer available"}
 
         if _normalize_email(call["toEmail"]) != _normalize_email(conn["user"]["email"]):
-            acknowledge({"ok": False, "message": "Not authorized for this call"})
-            return
+            return {"ok": False, "message": "Not authorized for this call"}
 
         _emit_to_user(None, "call_accepted", {"callId": call_id, "roomName": call["roomName"], "peerEmail": call["toEmail"]}, call["fromEmail"])
         _emit_to_user(None, "call_accepted", {"callId": call_id, "roomName": call["roomName"], "peerEmail": call["fromEmail"]}, call["toEmail"])
-        acknowledge({"ok": True, "callId": call_id, "roomName": call["roomName"], "peerEmail": call["fromEmail"]})
 
         with _lock:
             _pending_calls.pop(call_id, None)
+
+        return {"ok": True, "callId": call_id, "roomName": call["roomName"], "peerEmail": call["fromEmail"]}
 
     @socketio.on("call_decline")
     def on_call_decline(payload):
