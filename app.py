@@ -3,8 +3,14 @@ Flask application entry point — port of server.js.
 
 Run with:
     python app.py
-    gunicorn app:socketio --worker-class eventlet --workers 1
+    gunicorn -k geventwebsocket.gunicorn.workers.GeventWebSocketWorker -w 1 --bind 0.0.0.0:$PORT app:app
 """
+
+# gevent monkey-patch must come before ALL other imports so that stdlib
+# networking primitives (socket, threading, ssl) are replaced before any
+# library (pymongo, httpx, etc.) imports them.
+from gevent import monkey
+monkey.patch_all()
 
 import os
 import sys
@@ -77,8 +83,8 @@ def _connect_and_start_jobs():
 if not os.environ.get("FLASK_TESTING"):
     _connect_and_start_jobs()
 
-# Module-level `app` and `socketio` — both exposed so gunicorn can use either:
-#   gunicorn app:socketio --worker-class eventlet --workers 1
+# Module-level `app` — exposed so gunicorn can target it:
+#   gunicorn -k geventwebsocket.gunicorn.workers.GeventWebSocketWorker -w 1 app:app
 #   python app.py
 app = create_app()
 
