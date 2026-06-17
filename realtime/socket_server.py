@@ -65,7 +65,7 @@ def _emit_to_user(sid_map, event_name: str, payload: dict, to_email: str):
     normalized = _normalize_email(to_email)
     with _lock:
         sids = _user_sockets.get(normalized, set())
-        live = [s for s in sids if socketio.server.is_connected(s)]
+        live = [s for s in sids if socketio.server.manager.is_connected(s, '/')]
         if not live:
             _user_sockets.pop(normalized, None)
             return 0
@@ -320,7 +320,16 @@ def init_socket_server(app, flask_app) -> SocketIO:
 
             return {"ok": True, "callId": call_id, "roomName": room_name, "toEmail": to_email}
 
-        except Exception:
+        except Exception as _exc:
+            import traceback
+            _tb = traceback.format_exc()
+            print(f"[call_request] EXCEPTION: {_exc}", flush=True)
+            print(_tb, flush=True)
+            try:
+                with open("/tmp/call_error.log", "w") as _f:
+                    _f.write(f"EXCEPTION: {_exc}\n{_tb}\n")
+            except Exception:
+                pass
             return {"ok": False, "message": "Could not start the call"}
 
     @socketio.on("call_accept")
