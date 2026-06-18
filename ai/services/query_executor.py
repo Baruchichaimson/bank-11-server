@@ -15,9 +15,19 @@ def _normalize_sort_direction(value, fallback="desc") -> str:
     return value if value in ("asc", "desc") else fallback
 
 
-def _build_result_meta(*, start_date=None, end_date=None, limit=None, sort_direction=None) -> dict:
-    from_iso = start_date.isoformat() if start_date else None
-    to_iso = end_date.isoformat() if end_date else None
+def _build_result_meta(
+    *,
+    start_date=None,
+    end_date=None,
+    display_start_date=None,
+    display_end_date=None,
+    limit=None,
+    sort_direction=None,
+) -> dict:
+    from_value = display_start_date or start_date
+    to_value = display_end_date or end_date
+    from_iso = from_value.isoformat() if from_value else None
+    to_iso = to_value.isoformat() if to_value else None
     return {
         "from": from_iso,
         "to": to_iso,
@@ -55,12 +65,17 @@ class QueryExecutor:
             raise ValueError("transaction_repository is required for transactions_query")
 
         try:
-            normalized_range = normalize_time_range(date_range=query.get("dateRange"))
+            normalized_range = normalize_time_range(
+                time_range=query.get("timeRange"),
+                date_range=query.get("dateRange"),
+            )
         except Exception:
             return {"operation": "get_recent_transfers", "result": {"found": False, "message": "Invalid date range"}}
 
         start_date = normalized_range["startDate"]
         end_date = normalized_range["endDate"]
+        display_start_date = normalized_range.get("displayStartDate")
+        display_end_date = normalized_range.get("displayEndDate")
         base_args = dict(
             user_id=user_id,
             user_email=user_email,
@@ -87,7 +102,14 @@ class QueryExecutor:
                     "recipientName": recipient_name,
                     "count": len(items),
                     "items": items,
-                    **_build_result_meta(start_date=start_date, end_date=end_date, limit=limit, sort_direction="desc"),
+                    **_build_result_meta(
+                        start_date=start_date,
+                        end_date=end_date,
+                        display_start_date=display_start_date,
+                        display_end_date=display_end_date,
+                        limit=limit,
+                        sort_direction="desc",
+                    ),
                 },
             }
 
@@ -95,7 +117,16 @@ class QueryExecutor:
             count = self.transaction_repository.count_by_semantic_query(**base_args)
             return {
                 "operation": "count_transfers",
-                "result": {"found": True, "count": count, **_build_result_meta(start_date=start_date, end_date=end_date)},
+                "result": {
+                    "found": True,
+                    "count": count,
+                    **_build_result_meta(
+                        start_date=start_date,
+                        end_date=end_date,
+                        display_start_date=display_start_date,
+                        display_end_date=display_end_date,
+                    ),
+                },
             }
 
         if aggregation == "first_n":
@@ -108,7 +139,14 @@ class QueryExecutor:
                     "found": True,
                     "count": len(items),
                     "items": items,
-                    **_build_result_meta(start_date=start_date, end_date=end_date, limit=limit, sort_direction=sort),
+                    **_build_result_meta(
+                        start_date=start_date,
+                        end_date=end_date,
+                        display_start_date=display_start_date,
+                        display_end_date=display_end_date,
+                        limit=limit,
+                        sort_direction=sort,
+                    ),
                 },
             }
 
@@ -122,7 +160,14 @@ class QueryExecutor:
                     "found": True,
                     "count": len(items),
                     "items": items,
-                    **_build_result_meta(start_date=start_date, end_date=end_date, limit=limit, sort_direction=sort),
+                    **_build_result_meta(
+                        start_date=start_date,
+                        end_date=end_date,
+                        display_start_date=display_start_date,
+                        display_end_date=display_end_date,
+                        limit=limit,
+                        sort_direction=sort,
+                    ),
                 },
             }
 

@@ -46,7 +46,7 @@ class TransactionRepository:
             if start_date:
                 created_at_filter["$gte"] = start_date
             if end_date:
-                created_at_filter["$lte"] = end_date
+                created_at_filter["$lt"] = end_date
             query["createdAt"] = created_at_filter
 
         return query
@@ -90,7 +90,7 @@ class TransactionRepository:
             if start_date:
                 created_at["$gte"] = start_date
             if end_date:
-                created_at["$lte"] = end_date
+                created_at["$lt"] = end_date
             query["createdAt"] = created_at
         safe_limit = min(limit, 100) if isinstance(limit, int) and limit > 0 else 10
         return list(self._col().find(query).sort("createdAt", DESCENDING).limit(safe_limit))

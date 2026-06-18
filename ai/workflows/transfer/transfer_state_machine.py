@@ -230,20 +230,6 @@ def build_reset_transfer_form_action(language: str) -> dict:
     return {"type": "reset_transfer_form", "language": language}
 
 
-def build_transfer_confirmation_summary(*, language: str, amount, receiver_email: str, description: str) -> str:
-    desc_part = f"\nDescription: {description}" if description else ""
-    if language == "he":
-        desc_part = f"\nתיאור: {description}" if description else ""
-        return (
-            f"לפני ביצוע ההעברה, נא לאשר את הפרטים:\nסכום: {amount} ILS\nנמען: {receiver_email}{desc_part}\n\n"
-            "אם הכול נכון כתוב \"כן\". לביטול כתוב \"לא\"."
-        )
-    return (
-        f"Before I execute the transfer, please confirm the details:\nAmount: {amount} ILS\nRecipient: {receiver_email}{desc_part}\n\n"
-        "If everything is correct, type \"yes\". To cancel, type \"no\"."
-    )
-
-
 def build_low_balance_suggestion(language: str, balance: float) -> str | None:
     if balance > 300:
         return None
@@ -556,25 +542,7 @@ async def run_transfer_node(state: dict, config: RunnableConfig | None = None) -
         if confirm_sem.get("confirmation") != "yes":
             return _cancel()
 
-    # ── 6. Final summary confirmation ──────────────────────────────────────
-
-    summary = build_transfer_confirmation_summary(
-        language=flow_language, amount=amount,
-        receiver_email=receiver_email, description=description,
-    )
-    resume = interrupt({
-        "type": "confirm_transfer",
-        "message": summary,
-    })
-    confirm_sem = await _parse(
-        user_input=resume.get("userInput", ""),
-        payload={"confirmation": (resume.get("transferPayload") or {}).get("confirmation")},
-        phase=TRANSFER_PHASE_AWAIT_CONFIRMATION,
-    )
-    if confirm_sem.get("confirmation") != "yes":
-        return _cancel()
-
-    # ── 7. Execute ─────────────────────────────────────────────────────────
+    # ── 6. Execute ─────────────────────────────────────────────────────────
 
     try:
         transaction_service = (services or {}).get("transactionService")
@@ -599,7 +567,7 @@ async def run_transfer_node(state: dict, config: RunnableConfig | None = None) -
             f"ההעברה נכשלה: {err}" if flow_language == "he" else f"Transfer failed: {err}"
         )
 
-    # ── 8. Build success response ──────────────────────────────────────────
+    # ── 7. Build success response ──────────────────────────────────────────
 
     suggestions = []
     low_sug = build_low_balance_suggestion(flow_language, remaining_balance)

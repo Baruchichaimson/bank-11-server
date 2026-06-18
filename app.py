@@ -4,7 +4,6 @@ Flask + ASGI application entry point — port of server.js.
 Run with:
     python app.py
     uvicorn app:asgi_app --host 0.0.0.0 --port $PORT
-    gunicorn app:asgi_app --bind 0.0.0.0:$PORT -k uvicorn.workers.UvicornWorker
 """
 
 import os

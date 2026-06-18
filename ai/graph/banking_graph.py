@@ -37,7 +37,25 @@ def _to_client_action(action):
         return "open_video_call"
     if action.get("payload"):
         return {"type": action["type"], **action["payload"]}
-    return {"type": action["type"]}
+    return {k: v for k, v in action.items() if k != "payload"}
+
+
+def _transfer_state_for_interrupt(interrupt_value: dict) -> dict:
+    interrupt_type = (interrupt_value or {}).get("type")
+    phase = "await_confirmation" if interrupt_type in {"high_amount_confirm", "confirm_transfer"} else "form_open"
+    return {"phase": phase}
+
+
+def _extract_interrupt_value(*, final_state=None, state_snapshot=None) -> dict:
+    if isinstance(final_state, dict):
+        for intr in final_state.get("__interrupt__") or []:
+            return getattr(intr, "value", None) or {}
+
+    for task in (getattr(state_snapshot, "tasks", None) or []):
+        for intr in (getattr(task, "interrupts", None) or []):
+            return getattr(intr, "value", None) or {}
+
+    return {}
 
 
 async def user_request_node(state: dict) -> dict:
@@ -272,7 +290,11 @@ async def run_banking_graph(
     # If the graph is paused at an interrupt (active transfer waiting for user),
     # resume it with the new user input instead of starting fresh.
     current = await banking_graph.aget_state(config)
-    is_resuming = bool(current and current.values and current.next)
+    is_resuming = bool(
+        current
+        and current.values
+        and (current.next or _extract_interrupt_value(state_snapshot=current))
+    )
 
     if is_resuming:
         final_state = await banking_graph.ainvoke(
@@ -293,17 +315,13 @@ async def run_banking_graph(
 
     # Check if the graph paused at a new interrupt (transfer is still in progress)
     updated = await banking_graph.aget_state(config)
-    if updated and updated.next:
-        interrupt_value = {}
-        for task in (updated.tasks or []):
-            for intr in (task.interrupts or []):
-                interrupt_value = intr.value or {}
-                break
+    interrupt_value = _extract_interrupt_value(final_state=final_state, state_snapshot=updated)
+    if interrupt_value:
         reply_payload = create_reply_payload(
             history=(final_state or {}).get("history") or history or [],
             user_text=user_input,
             reply=interrupt_value.get("message", ""),
-            transfer_state={"phase": "form_open"},  # signals active transfer to client
+            transfer_state=_transfer_state_for_interrupt(interrupt_value),
             action=_to_client_action(interrupt_value.get("action")),
         )
         graph_ms = (time.perf_counter() - graph_start) * 1000

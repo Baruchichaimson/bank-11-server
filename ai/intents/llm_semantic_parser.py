@@ -461,6 +461,11 @@ User: "מה ההעברה האחרונה שביצעתי?"
 Output:
 {{"domain":"transactions","intent":"recent_transactions","confidence":0.95,"isAmbiguous":false,"ambiguityReason":null,"toolName":null,"semanticQuery":{{"domain":"transactions","intent":"transactions_query","action":"transfer_money","filters":{{"type":"transfer","direction":"outgoing"}},"timeRange":null,"dateRange":null,"aggregation":"first_n","limit":1,"sortDirection":"desc"}},"transferPayload":null}}
 
+User: "כמה העברות ביצעתי החודש?"
+
+Output:
+{{"domain":"transactions","intent":"recent_transactions","confidence":0.95,"isAmbiguous":false,"ambiguityReason":null,"toolName":null,"semanticQuery":{{"domain":"transactions","intent":"transactions_query","action":"transfer_money","filters":{{"type":"transfer","direction":"outgoing"}},"timeRange":"this_month","dateRange":null,"aggregation":"count","limit":null,"sortDirection":"desc"}},"transferPayload":null}}
+
 Confidence:
 - If confidence is below 0.65, return unknown/unknown with confidence 0.
 - If ambiguous between workflows, set isAmbiguous true, explain ambiguityReason briefly, and return unknown/unknown.

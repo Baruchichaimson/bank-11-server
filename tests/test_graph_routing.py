@@ -40,11 +40,67 @@ class TransactionService:
     pass
 
 
+class TransferProfileService:
+    def __init__(self):
+        self.sender = {"_id": "sender-1", "email": "dana@example.com"}
+        self.receiver = {"_id": "receiver-1", "email": "ron@example.com"}
+
+    def getUserById(self, user_id):
+        return self.sender if str(user_id) == str(self.sender["_id"]) else None
+
+    def getUserByEmail(self, email):
+        return self.receiver if str(email).lower() == self.receiver["email"] else None
+
+
+class TransferAccountService:
+    def __init__(self):
+        self.accounts = {
+            "sender-1": {"_id": "account-sender", "userId": "sender-1", "balance": 5000.0},
+            "receiver-1": {"_id": "account-receiver", "userId": "receiver-1", "balance": 250.0},
+        }
+
+    async def get_account_by_user_id(self, user_id):
+        return self.accounts.get(str(user_id))
+
+    async def find_account_by_id(self, account_id):
+        for account in self.accounts.values():
+            if account["_id"] == account_id:
+                return account
+        return None
+
+
+class TransferRiskService:
+    def evaluateRisk(self, _payload):
+        return {"requiresReview": False}
+
+
+class TransferTransactionService:
+    def __init__(self):
+        self.executed = None
+
+    async def execute_transfer(self, **kwargs):
+        self.executed = kwargs
+        return {"_id": "tx-1", "status": "success", **kwargs}
+
+    async def count_monthly_outgoing_transfers(self, **_kwargs):
+        return 1
+
+
 def _services():
     return {
         "accountService": AccountService(),
         "profileService": ProfileService(),
         "transactionService": TransactionService(),
+    }
+
+
+def _transfer_services():
+    transaction_service = TransferTransactionService()
+    return {
+        "accountService": TransferAccountService(),
+        "profileService": TransferProfileService(),
+        "transactionService": transaction_service,
+        "riskService": TransferRiskService(),
     }
 
 
@@ -123,6 +179,110 @@ async def test_llm_transfer_intent_routes_to_transfer_workflow():
 
     assert result["nextTransferState"] == {"phase": "form_open"}
     assert result["action"]["type"] == "open_money_transfer_inline"
+
+
+@pytest.mark.asyncio
+async def test_inline_transfer_form_executes_small_amount_without_confirmation():
+    thread_id = _thread_id("transfer-form")
+    services = _transfer_services()
+
+    opened = await run_banking_graph(
+        user_input="תבצע לי העברה",
+        user_id="sender-1",
+        user_email="dana@example.com",
+        history=[],
+        create_chat_completion=_fake_llm({
+            "תבצע לי העברה": {
+                "domain": "transactions",
+                "intent": "transfer_money",
+                "confidence": 0.98,
+                "semanticQuery": None,
+                "toolName": "open_money_transfer_inline",
+                "transferPayload": None,
+            }
+        }),
+        services=services,
+        thread_id=thread_id,
+    )
+
+    assert opened["nextTransferState"]["phase"] == "form_open"
+    assert opened["action"] == {"type": "open_money_transfer_inline", "language": "he"}
+
+    executed = await run_banking_graph(
+        user_input="פרטי העברה נשלחו מהטופס",
+        user_id="sender-1",
+        user_email="dana@example.com",
+        history=opened["nextHistory"],
+        transfer_payload={
+            "receiverEmail": "ron@example.com",
+            "amount": 100,
+            "description": "rent",
+        },
+        services=services,
+        thread_id=thread_id,
+    )
+
+    assert executed["nextTransferState"] is None
+    assert executed["action"] is None
+    assert "ההעברה הושלמה בהצלחה" in executed["reply"]
+    assert services["transactionService"].executed["amount"] == 100.0
+
+
+@pytest.mark.asyncio
+async def test_inline_transfer_form_requires_confirmation_only_for_high_amount():
+    thread_id = _thread_id("transfer-high-amount")
+    services = _transfer_services()
+
+    opened = await run_banking_graph(
+        user_input="תבצע לי העברה",
+        user_id="sender-1",
+        user_email="dana@example.com",
+        history=[],
+        create_chat_completion=_fake_llm({
+            "תבצע לי העברה": {
+                "domain": "transactions",
+                "intent": "transfer_money",
+                "confidence": 0.98,
+                "semanticQuery": None,
+                "toolName": "open_money_transfer_inline",
+                "transferPayload": None,
+            }
+        }),
+        services=services,
+        thread_id=thread_id,
+    )
+
+    confirmation = await run_banking_graph(
+        user_input="פרטי העברה נשלחו מהטופס",
+        user_id="sender-1",
+        user_email="dana@example.com",
+        history=opened["nextHistory"],
+        transfer_payload={
+            "receiverEmail": "ron@example.com",
+            "amount": 1500,
+            "description": "rent",
+        },
+        services=services,
+        thread_id=thread_id,
+    )
+
+    assert confirmation["nextTransferState"]["phase"] == "await_confirmation"
+    assert confirmation["action"]["type"] == "transfer_high_amount_confirm"
+    assert services["transactionService"].executed is None
+
+    executed = await run_banking_graph(
+        user_input="כן",
+        user_id="sender-1",
+        user_email="dana@example.com",
+        history=confirmation["nextHistory"],
+        transfer_payload={"confirmation": "yes"},
+        services=services,
+        thread_id=thread_id,
+    )
+
+    assert executed["nextTransferState"] is None
+    assert "ההעברה הושלמה בהצלחה" in executed["reply"]
+    assert services["transactionService"].executed["amount"] == 1500.0
 
 
 @pytest.mark.asyncio
