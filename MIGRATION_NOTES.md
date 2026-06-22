@@ -137,17 +137,14 @@ single-node replica set is sufficient) to get ACID guarantees.
 
 ### 3. Docker Files
 
-`Dockerfile` and `docker-compose.yml` still reference Node.js.  
-**Action required:** Update them for Python:
+`Dockerfile`, `.dockerignore`, and `docker-compose.yml` now target the Python
+backend. The container runs `app:asgi_app` through Gunicorn with Uvicorn's ASGI
+worker so Flask REST routes and Socket.IO both work.
 
-```dockerfile
-FROM python:3.11-slim
-WORKDIR /app
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
-COPY . .
-CMD ["gunicorn", "app:asgi_app", "--bind", "0.0.0.0:3000", "--workers", "2", "-k", "uvicorn.workers.UvicornWorker"]
-```
+The default Docker worker count is `WEB_CONCURRENCY=1` because Socket.IO
+connection state and the cleanup scheduler are currently process-local. Raise
+this only after adding shared Socket.IO state/message queue support and a
+distributed scheduler lock.
 
 ### 4. Password Reset HTML Pages
 

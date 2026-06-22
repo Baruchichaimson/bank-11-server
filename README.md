@@ -144,5 +144,28 @@ The frontend should work without changes:
 
 ## Docker
 
-The `Dockerfile` and `docker-compose.yml` in the repository root require updating for Python.  
-See `MIGRATION_NOTES.md` for details.
+Build and run the Flask/ASGI backend with MongoDB:
+
+```bash
+docker compose up --build
+```
+
+The API will be available at:
+
+```bash
+http://localhost:3000/api/v1/health
+```
+
+If port `3000` is already in use, run with another host port:
+
+```bash
+HOST_PORT=3001 docker compose up --build
+```
+
+For local Docker runs, `docker-compose.yml` supplies a development
+`JWT_SECRET` and points `MONGO_URI` at the bundled MongoDB service. For
+production, set a real `JWT_SECRET`, update CORS/frontend URLs, and provide
+the required email/AI keys through environment variables.
+
+The MongoDB container is only exposed inside the Docker network by default, so
+it will not conflict with a local MongoDB already listening on port `27017`.
