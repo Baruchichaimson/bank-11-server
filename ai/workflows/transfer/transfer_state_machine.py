@@ -10,7 +10,7 @@ from langgraph.graph import StateGraph, START, END
 from typing_extensions import TypedDict
 from typing import Any, Optional
 from ai.contracts.assistant_response_contract import create_executed_workflow_response, create_workflow_response
-from observability.langfuse_tracing import get_request_id, start_span, trace_log
+from observability.langfuse_tracing import get_request_id, record_event, start_span, start_tool, trace_log
 
 TRANSFER_PHASE_IDLE = "idle"
 TRANSFER_PHASE_FORM_OPEN = "form_open"
@@ -352,6 +352,13 @@ async def run_transfer_node(state: dict, config: RunnableConfig | None = None) -
         }, result_status="cancelled")
 
     def _error(msg):
+        record_event(
+            name="error_occurred",
+            metadata={
+                "selectedWorkflow": "transfer_workflow",
+                "success": False,
+            },
+        )
         return _finish({
             **state,
             "workflowResponse": create_workflow_response(
@@ -362,6 +369,15 @@ async def run_transfer_node(state: dict, config: RunnableConfig | None = None) -
         }, result_status="error")
 
     def _form_error(field, msg):
+        record_event(
+            name="validation_failed",
+            metadata={
+                "selectedWorkflow": "transfer_workflow",
+                "missingFields": [field],
+                "reason": field,
+                "success": False,
+            },
+        )
         safe_email = "" if field == "receiverEmail" else receiver_email
         safe_amount = None if field == "amount" else amount
         return _finish({
@@ -427,6 +443,29 @@ async def run_transfer_node(state: dict, config: RunnableConfig | None = None) -
     # ── 2. Collect missing details (interrupt until we have email + amount) ─
 
     while not (receiver_email and amount is not None):
+        missing_fields = _missing_fields()
+        record_event(
+            name="missing_required_fields",
+            metadata={
+                "selectedWorkflow": "transfer_workflow",
+                "missingFields": missing_fields,
+            },
+        )
+        tool_start = time.perf_counter()
+        action = build_open_transfer_form_action(flow_language)
+        tool = start_tool(
+            name="open_money_transfer_inline",
+            input={"missingFields": missing_fields},
+            metadata={"toolName": "open_money_transfer_inline", "missingFields": missing_fields},
+        )
+        tool_summary = {
+            "toolName": "open_money_transfer_inline",
+            "success": True,
+            "actionType": "open_money_transfer_inline",
+            "missingFields": missing_fields,
+            "duration_ms": (time.perf_counter() - tool_start) * 1000,
+        }
+        tool.end(output=tool_summary, metadata=tool_summary)
         resume = interrupt({
             "type": "open_transfer_form",
             "message": (
@@ -434,7 +473,7 @@ async def run_transfer_node(state: dict, config: RunnableConfig | None = None) -
                 if flow_language == "he"
                 else "I opened a transfer form in the chat. Fill in the details and submit."
             ),
-            "action": build_open_transfer_form_action(flow_language),
+            "action": action,
         })
 
         new_payload = resume.get("transferPayload") or {}

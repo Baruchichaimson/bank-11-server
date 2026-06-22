@@ -10,7 +10,7 @@ from ai.assistant.openai_client import IS_LANGFUSE_OPENAI_CLIENT, openai_client,
 from ai.graph.banking_graph import run_banking_graph
 from ai.services.business_services import create_business_services
 from ai.assistant.shared import MAX_HISTORY, detect_language, create_reply_payload
-from observability.langfuse_tracing import get_langfuse_openai_kwargs
+from observability.langfuse_tracing import record_event, get_langfuse_openai_kwargs
 
 
 async def _create_chat_completion(payload: dict):
@@ -76,6 +76,14 @@ async def generate_assistant_reply(
         sys.stderr.write(f"[chat_assistant] ERROR in run_banking_graph: {err}\n")
         sys.stderr.write(traceback.format_exc())
         sys.stderr.flush()
+        record_event(
+            name="error_occurred",
+            metadata={"component": "chat_assistant", "error": str(err)},
+        )
+        record_event(
+            name="fallback_used",
+            metadata={"component": "chat_assistant", "reason": "run_banking_graph_exception"},
+        )
         fallback_reply = (
             "יש כרגע תקלה זמנית בעוזר. נסה שוב בעוד כמה שניות."
             if user_language == "he"

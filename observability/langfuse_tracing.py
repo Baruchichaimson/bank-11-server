@@ -209,12 +209,12 @@ def sanitize_for_trace(value, *, _depth: int = 0):
 
 
 class TraceObservation:
-    def __init__(self, obj=None, *, is_root: bool = False, context_manager=None, attribute_context_manager=None):
+    def __init__(self, obj=None, *, is_root: bool = False, context_manager=None, attribute_context_manager=None, ended: bool = False):
         self.obj = obj
         self.is_root = is_root
         self._context_manager = context_manager
         self._attribute_context_manager = attribute_context_manager
-        self._ended = False
+        self._ended = ended
 
     @property
     def enabled(self) -> bool:
@@ -225,6 +225,12 @@ class TraceObservation:
 
     def generation(self, **kwargs):
         return _create_child_observation(self, "generation", **kwargs)
+
+    def tool(self, **kwargs):
+        return _create_child_observation(self, "tool", **kwargs)
+
+    def event(self, **kwargs):
+        return _create_child_observation(self, "event", **kwargs)
 
     def update(self, **kwargs):
         if not self.obj or self._ended:
@@ -255,7 +261,14 @@ class TraceObservation:
                     self.obj.update(**clean)
                 self._exit_contexts(None, None, None)
             elif hasattr(self.obj, "end"):
-                self.obj.end(**clean)
+                if hasattr(self.obj, "update") and clean:
+                    try:
+                        self.obj.update(**clean)
+                    except Exception as err:
+                        trace_log(f"langfuse_update_before_end_error error={err}")
+                    self.obj.end()
+                else:
+                    self.obj.end(**clean)
             elif hasattr(self.obj, "update"):
                 self.obj.update(**clean)
         except Exception as err:
@@ -395,11 +408,27 @@ def _create_child_observation(parent: TraceObservation | None, kind: str, **kwar
         return TraceObservation()
     try:
         clean = _sanitize_kwargs(kwargs)
+        if kind == "event":
+            if hasattr(obj, "start_observation"):
+                try:
+                    name = clean.get("name")
+                    event = TraceObservation(obj.start_observation(name=name, as_type="event"))
+                    event.update(**{k: v for k, v in clean.items() if k != "name"})
+                    event.end()
+                    return event
+                except TypeError:
+                    pass
+            if hasattr(obj, "create_event"):
+                return TraceObservation(obj.create_event(**clean), ended=True)
         if hasattr(obj, kind):
             return TraceObservation(getattr(obj, kind)(**clean))
         if hasattr(obj, "start_observation"):
-            as_type = "generation" if kind == "generation" else "span"
-            return TraceObservation(obj.start_observation(as_type=as_type, **clean))
+            as_type = {
+                "event": "event",
+                "generation": "generation",
+                "tool": "tool",
+            }.get(kind, "span")
+            return TraceObservation(obj.start_observation(as_type=as_type, **clean), ended=kind == "event")
     except Exception as err:
         trace_log(f"langfuse_start_{kind}_error name={kwargs.get('name')} error={err}")
     return TraceObservation()
@@ -442,6 +471,14 @@ def start_span(*, name: str, input=None, metadata=None) -> TraceObservation:
     span = _create_child_observation(get_current_trace(), "span", name=name, input=input, metadata=metadata)
     _current_observation.set(span)
     return span
+
+
+def start_tool(*, name: str, input=None, metadata=None) -> TraceObservation:
+    return _create_child_observation(get_current_trace(), "tool", name=name, input=input, metadata=metadata)
+
+
+def record_event(*, name: str, input=None, output=None, metadata=None) -> TraceObservation:
+    return _create_child_observation(get_current_trace(), "event", name=name, input=input, output=output, metadata=metadata)
 
 
 def start_generation(*, name: str, model=None, input=None, metadata=None, model_parameters=None) -> TraceObservation:

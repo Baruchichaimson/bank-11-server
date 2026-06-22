@@ -1,7 +1,7 @@
 from ai.contracts.assistant_response_contract import create_empty_workflow_response, create_executed_workflow_response
 from ai.assistant.shared import get_llm_parse_failed_reply
 from ai.assistant.response_formatting import format_financial_response
-from observability.langfuse_tracing import duration_ms, get_request_id, now_ms, start_span, trace_log
+from observability.langfuse_tracing import duration_ms, get_request_id, now_ms, record_event, start_span, trace_log
 
 
 async def run_transactions_workflow(*, state: dict, services: dict) -> dict:
@@ -12,6 +12,23 @@ async def run_transactions_workflow(*, state: dict, services: dict) -> dict:
     user_language = (state.get("session") or {}).get("userLanguage", "en")
 
     if not semantic_query:
+        intent = state.get("intent") or {}
+        record_event(
+            name="validation_failed",
+            metadata={
+                "selectedDomain": intent.get("domain"),
+                "selectedIntent": intent.get("intent"),
+                "selectedWorkflow": "transactions_workflow",
+                "reason": "missing_semantic_query",
+            },
+        )
+        record_event(
+            name="fallback_used",
+            metadata={
+                "selectedWorkflow": "transactions_workflow",
+                "reason": "missing_semantic_query",
+            },
+        )
         workflow_response = create_empty_workflow_response(message=get_llm_parse_failed_reply(user_language))
         output = {
             **state,

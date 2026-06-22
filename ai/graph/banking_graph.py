@@ -16,6 +16,8 @@ from ai.shared.json_safe import make_json_safe
 from config.settings import BANKING_GRAPH_DEBUG
 from observability.langfuse_tracing import (
     get_request_id,
+    get_trace_fields,
+    record_event,
     start_span,
     text_preview,
     trace_log,
@@ -38,6 +40,10 @@ def _to_client_action(action):
     if action.get("payload"):
         return {"type": action["type"], **action["payload"]}
     return {k: v for k, v in action.items() if k != "payload"}
+
+
+def _action_type(action):
+    return action.get("type") if isinstance(action, dict) else action
 
 
 def _transfer_state_for_interrupt(interrupt_value: dict) -> dict:
@@ -121,6 +127,16 @@ async def workflow_router_node(state: dict) -> dict:
     _debug("BANKING GRAPH SELECTED WORKFLOW", workflow)
     span.end(output={"selected_workflow": workflow}, metadata={**before, "selected_workflow": workflow})
     update_trace_fields(selected_workflow=workflow)
+    record_event(
+        name="workflow_selected",
+        metadata={
+            "selectedDomain": intent.get("domain"),
+            "selectedIntent": intent.get("intent"),
+            "selectedWorkflow": workflow,
+            "confidence": intent.get("confidence"),
+            "source": intent.get("source"),
+        },
+    )
     trace_log(f"workflow_router requestId={get_request_id()} workflow={workflow}")
     return make_json_safe({
         **state,
@@ -168,6 +184,14 @@ async def _run_workflow_with_trace(*, workflow_name: str, func, state: dict, con
         return result
     except Exception as err:
         ms = (time.perf_counter() - start) * 1000
+        record_event(
+            name="error_occurred",
+            metadata={
+                "selectedWorkflow": workflow_name,
+                "error": str(err),
+                "duration_ms": ms,
+            },
+        )
         span.end(
             output={"workflow_name": workflow_name, "success": False, "error": str(err), "duration_ms": ms},
             metadata={"workflow_name": workflow_name, "success": False, "error": str(err), "duration_ms": ms},
@@ -325,6 +349,19 @@ async def run_banking_graph(
             action=_to_client_action(interrupt_value.get("action")),
         )
         graph_ms = (time.perf_counter() - graph_start) * 1000
+        trace_fields = get_trace_fields()
+        record_event(
+            name="response_created",
+            metadata={
+                "selectedDomain": trace_fields.get("selected_domain"),
+                "selectedIntent": trace_fields.get("selected_intent"),
+                "selectedWorkflow": trace_fields.get("selected_workflow"),
+                "success": True,
+                "interrupted": True,
+                "actionType": _action_type(reply_payload.get("action")),
+                "duration_ms": graph_ms,
+            },
+        )
         graph_span.end(
             output={
                 "duration_ms": graph_ms,
@@ -353,6 +390,18 @@ async def run_banking_graph(
         action=_to_client_action(workflow_response.get("action")),
     )
     graph_ms = (time.perf_counter() - graph_start) * 1000
+    trace_fields = get_trace_fields()
+    record_event(
+        name="response_created",
+        metadata={
+            "selectedDomain": trace_fields.get("selected_domain"),
+            "selectedIntent": trace_fields.get("selected_intent"),
+            "selectedWorkflow": trace_fields.get("selected_workflow"),
+            "success": True,
+            "actionType": _action_type(reply_payload.get("action")),
+            "duration_ms": graph_ms,
+        },
+    )
     graph_span.end(
         output={
             "duration_ms": graph_ms,

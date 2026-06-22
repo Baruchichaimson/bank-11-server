@@ -18,6 +18,7 @@ from config.settings import ACTIVE_AI_MODEL, ASSISTANT_DEBUG_ERRORS
 from observability.langfuse_tracing import (
     capture_io_enabled,
     get_request_id,
+    record_event,
     start_span,
     text_preview,
     trace_log,
@@ -570,6 +571,17 @@ async def parse_query_with_llm(*, user_input: str, history: list, create_chat_co
                     "validationFailureReason": validation_reason,
                     "promptChars": prompt_chars,
                     "promptTokenEstimate": prompt_token_estimate,
+                },
+            )
+            record_event(
+                name="validation_failed",
+                metadata={
+                    "selectedDomain": (parsed or {}).get("domain") if isinstance(parsed, dict) else None,
+                    "selectedIntent": (parsed or {}).get("intent") if isinstance(parsed, dict) else None,
+                    "confidence": (parsed or {}).get("confidence") if isinstance(parsed, dict) else None,
+                    "reason": validation_reason,
+                    "component": "llm_semantic_parser",
+                    "duration_ms": (time.perf_counter() - start) * 1000,
                 },
             )
             trace_log(

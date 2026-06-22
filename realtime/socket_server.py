@@ -99,6 +99,29 @@ def _cancel_active_chat_request(request_state: dict):
         task.cancel()
 
 
+def _record_chat_completed(request_state: dict, *, request_id: str, success: bool, cancelled: bool, elapsed_ms=None, metadata=None):
+    if request_state.get("chatCompletionEventRecorded"):
+        return
+    request_state["chatCompletionEventRecorded"] = True
+    trace = request_state.get("trace")
+    if not trace:
+        return
+    trace_fields = get_trace_fields()
+    event_metadata = {
+        "requestId": request_id,
+        "selectedDomain": trace_fields.get("selected_domain"),
+        "selectedIntent": trace_fields.get("selected_intent"),
+        "selectedWorkflow": trace_fields.get("selected_workflow"),
+        "confidence": trace_fields.get("intent_confidence"),
+        "success": success,
+        "cancelled": cancelled,
+    }
+    if elapsed_ms is not None:
+        event_metadata["duration_ms"] = elapsed_ms
+    event_metadata.update(metadata or {})
+    trace.event(name="chat_message_completed", metadata=event_metadata)
+
+
 async def _emit_to_user(event_name: str, payload: dict, to_email: str) -> int:
     if async_sio is None:
         return 0
@@ -187,6 +210,14 @@ async def _run_chat_request(*, sid: str, request_id: str, request_state: dict, t
         total_ms = None
         if start_ms:
             total_ms = duration_ms(start_ms)
+        _record_chat_completed(
+            request_state,
+            request_id=request_id,
+            success=True,
+            cancelled=False,
+            elapsed_ms=total_ms,
+            metadata={"actionType": action_type},
+        )
         request_state["trace"].end(
             output={
                 "reply": text_preview(result.get("reply", "")),
@@ -213,6 +244,15 @@ async def _run_chat_request(*, sid: str, request_id: str, request_state: dict, t
         )
     except asyncio.CancelledError:
         request_state["cancelled"] = True
+        start_ms = request_state.get("startMs")
+        _record_chat_completed(
+            request_state,
+            request_id=request_id,
+            success=False,
+            cancelled=True,
+            elapsed_ms=duration_ms(start_ms) if start_ms else None,
+            metadata={"cancel_reason": "task_cancelled"},
+        )
         request_state["trace"].end(
             output={"cancelled": True, "cancel_reason": "task_cancelled"},
             metadata={"cancelled": True, "cancel_reason": "task_cancelled"},
@@ -230,6 +270,24 @@ async def _run_chat_request(*, sid: str, request_id: str, request_state: dict, t
             else f"Assistant error: {err_str}"
         )
         _log_socket(f"chat_error emitted requestId={request_id} error={err_str}")
+        start_ms = request_state.get("startMs")
+        request_state["trace"].event(
+            name="error_occurred",
+            metadata={
+                "requestId": request_id,
+                "error": err_str,
+                "success": False,
+                "duration_ms": duration_ms(start_ms) if start_ms else None,
+            },
+        )
+        _record_chat_completed(
+            request_state,
+            request_id=request_id,
+            success=False,
+            cancelled=False,
+            elapsed_ms=duration_ms(start_ms) if start_ms else None,
+            metadata={"error": err_str},
+        )
         request_state["trace"].end(
             output={"error": err_str, "cancelled": False},
             metadata={"error": err_str, "cancelled": False},
@@ -361,11 +419,37 @@ def create_async_socket_server() -> socketio.AsyncServer:
             session_id=sid,
             tags=["chatbot", "socketio"],
         )
+        trace.event(
+            name="user_message_received",
+            input=text if capture_io_enabled() else text_preview(text),
+            metadata={
+                "requestId": request_id,
+                "messageLength": len(text),
+                "hasTransferPayload": bool(transfer_payload),
+            },
+        )
         request_state = {"cancelled": False, "task": None, "trace": trace, "startMs": now_ms()}
         active_requests[request_id] = request_state
 
         if not text:
             _log_socket(f"chat_error emitted requestId={request_id} reason=message_required")
+            trace.event(
+                name="validation_failed",
+                metadata={
+                    "requestId": request_id,
+                    "reason": "message_required",
+                    "missingFields": ["message"],
+                    "success": False,
+                },
+            )
+            _record_chat_completed(
+                request_state,
+                request_id=request_id,
+                success=False,
+                cancelled=False,
+                elapsed_ms=duration_ms(request_state["startMs"]),
+                metadata={"reason": "message_required"},
+            )
             trace.end(output={"error": "Message is required", "cancelled": False})
             await sio.emit("chat_error", {"requestId": request_id, "message": "Message is required"}, to=sid)
             active_requests.pop(request_id, None)
@@ -374,6 +458,23 @@ def create_async_socket_server() -> socketio.AsyncServer:
 
         if len(text) > 2000:
             _log_socket(f"chat_error emitted requestId={request_id} reason=message_too_long")
+            trace.event(
+                name="validation_failed",
+                metadata={
+                    "requestId": request_id,
+                    "reason": "message_too_long",
+                    "success": False,
+                    "messageLength": len(text),
+                },
+            )
+            _record_chat_completed(
+                request_state,
+                request_id=request_id,
+                success=False,
+                cancelled=False,
+                elapsed_ms=duration_ms(request_state["startMs"]),
+                metadata={"reason": "message_too_long"},
+            )
             trace.end(output={"error": "Message is too long", "cancelled": False})
             await sio.emit("chat_error", {"requestId": request_id, "message": "Message is too long"}, to=sid)
             active_requests.pop(request_id, None)
@@ -410,6 +511,15 @@ def create_async_socket_server() -> socketio.AsyncServer:
         _log_socket(f"request canceled requestId={request_id}")
         trace = request_state.get("trace")
         if trace:
+            start_ms = request_state.get("startMs")
+            _record_chat_completed(
+                request_state,
+                request_id=request_id,
+                success=False,
+                cancelled=True,
+                elapsed_ms=duration_ms(start_ms) if start_ms else None,
+                metadata={"cancel_reason": "user_cancel"},
+            )
             trace.end(
                 output={"requestId": request_id, "cancelled": True, "cancel_reason": "user_cancel"},
                 metadata={"cancelled": True, "cancel_reason": "user_cancel"},

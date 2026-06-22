@@ -8,6 +8,7 @@ from observability.langfuse_tracing import (
     duration_ms,
     get_request_id,
     now_ms,
+    record_event,
     start_span,
     text_preview,
     trace_log,
@@ -67,6 +68,19 @@ async def detect_intent(
             selected_intent=result.get("intent"),
             intent_source=result.get("source"),
             intent_confidence=result.get("confidence"),
+        )
+        tool = result.get("tool") if isinstance(result.get("tool"), dict) else {}
+        record_event(
+            name="intent_detected",
+            metadata={
+                "selectedDomain": result.get("domain"),
+                "selectedIntent": result.get("intent"),
+                "confidence": result.get("confidence"),
+                "toolName": tool.get("name"),
+                "source": result.get("source"),
+                "hasSemanticQuery": bool(result.get("semanticQuery")),
+                "duration_ms": ms,
+            },
         )
         trace_log(
             f"detect_intent requestId={get_request_id()} ms={ms:.1f} "

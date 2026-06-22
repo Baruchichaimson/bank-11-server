@@ -1,6 +1,7 @@
 from datetime import datetime, timezone
 from ai.repositories.transaction_repository import TransactionRepository
 from ai.services.query_executor import QueryExecutor
+from observability.langfuse_tracing import duration_ms, mask_email, now_ms, start_tool
 
 
 def _to_iso(value) -> str | None:
@@ -26,6 +27,37 @@ def _format_transfer(tx: dict) -> dict:
     }
 
 
+def _structured_query_tool_input(*, user_id, user_email, query: dict | None) -> dict:
+    query = query or {}
+    filters = query.get("filters") if isinstance(query.get("filters"), dict) else {}
+    return {
+        "hasUserId": bool(user_id),
+        "hasUserEmail": bool(user_email),
+        "userEmail": mask_email(user_email or ""),
+        "domain": query.get("domain"),
+        "intent": query.get("intent"),
+        "aggregation": query.get("aggregation"),
+        "action": query.get("action"),
+        "filterKeys": sorted(filters.keys()),
+        "hasDateRange": bool(query.get("dateRange") or query.get("timeRange")),
+        "hasRecipientName": bool(query.get("recipientName")),
+        "requestedLimit": query.get("limit"),
+    }
+
+
+def _result_summary(result_obj: dict | None) -> dict:
+    result_obj = result_obj or {}
+    result = result_obj.get("result") if isinstance(result_obj, dict) else None
+    result = result if isinstance(result, dict) else {}
+    return {
+        "success": True,
+        "operation": result_obj.get("operation"),
+        "found": result.get("found"),
+        "count": result.get("count"),
+        "hasItems": bool(result.get("items")),
+    }
+
+
 def create_transaction_service(*, account_service=None, profile_service=None, transaction_repository=None):
     repo = transaction_repository or TransactionRepository()
     executor = QueryExecutor(
@@ -36,7 +68,21 @@ def create_transaction_service(*, account_service=None, profile_service=None, tr
 
     class TransactionService:
         async def execute_structured_query(self, *, user_id, user_email=None, query):
-            return await executor.execute(user_id=user_id, user_email=user_email, query=query)
+            start = now_ms()
+            tool = start_tool(
+                name="get_recent_transactions",
+                input=_structured_query_tool_input(user_id=user_id, user_email=user_email, query=query),
+                metadata={"toolName": "get_recent_transactions"},
+            )
+            try:
+                result_obj = await executor.execute(user_id=user_id, user_email=user_email, query=query)
+                summary = {"toolName": "get_recent_transactions", **_result_summary(result_obj), "duration_ms": duration_ms(start)}
+                tool.end(output=summary, metadata=summary)
+                return result_obj
+            except Exception as err:
+                summary = {"toolName": "get_recent_transactions", "success": False, "error": str(err), "duration_ms": duration_ms(start)}
+                tool.end(output=summary, metadata=summary)
+                raise
 
         async def get_transactions(self, *, user_id, args=None, operation=None):
             args = args or {}
@@ -143,21 +189,100 @@ def create_transaction_service(*, account_service=None, profile_service=None, tr
             return await self._get_transfers_with_counterparty(user_id=user_id, args=args or {})
 
         async def open_transfer_form(self, **_):
-            return {"found": True, "action": {"type": "open_money_transfer_inline"}}
+            start = now_ms()
+            tool = start_tool(
+                name="open_money_transfer_inline",
+                input={"actionType": "open_money_transfer_inline"},
+                metadata={"toolName": "open_money_transfer_inline"},
+            )
+            result = {"found": True, "action": {"type": "open_money_transfer_inline"}}
+            summary = {
+                "toolName": "open_money_transfer_inline",
+                "success": True,
+                "actionType": "open_money_transfer_inline",
+                "duration_ms": duration_ms(start),
+            }
+            tool.end(output=summary, metadata=summary)
+            return result
 
         async def execute_transfer(self, *, from_account_id, to_account_id, amount, description=None):
-            return repo.execute_transfer(
-                from_account_id=from_account_id,
-                to_account_id=to_account_id,
-                amount=amount,
-                description=description,
+            start = now_ms()
+            tool = start_tool(
+                name="create_transfer",
+                input={
+                    "hasFromAccountId": bool(from_account_id),
+                    "hasToAccountId": bool(to_account_id),
+                    "hasAmount": amount is not None,
+                    "hasDescription": bool(description),
+                },
+                metadata={"toolName": "create_transfer"},
             )
+            try:
+                result = repo.execute_transfer(
+                    from_account_id=from_account_id,
+                    to_account_id=to_account_id,
+                    amount=amount,
+                    description=description,
+                )
+                summary = {
+                    "toolName": "create_transfer",
+                    "success": True,
+                    "status": result.get("status") if isinstance(result, dict) else None,
+                    "hasTransactionId": bool((result or {}).get("id")) if isinstance(result, dict) else False,
+                    "duration_ms": duration_ms(start),
+                }
+                tool.end(output=summary, metadata=summary)
+                return result
+            except Exception as err:
+                summary = {"toolName": "create_transfer", "success": False, "error": str(err), "duration_ms": duration_ms(start)}
+                tool.end(output=summary, metadata=summary)
+                raise
 
         async def get_recent_transactions_by_email(self, *, email, limit=5):
-            return repo.list_recent_by_email(email=email, limit=limit)
+            start = now_ms()
+            tool = start_tool(
+                name="get_recent_transactions",
+                input={"email": mask_email(email), "hasEmail": bool(email), "requestedLimit": limit},
+                metadata={"toolName": "get_recent_transactions", "purpose": "recent_by_email"},
+            )
+            try:
+                result = repo.list_recent_by_email(email=email, limit=limit)
+                summary = {
+                    "toolName": "get_recent_transactions",
+                    "success": True,
+                    "purpose": "recent_by_email",
+                    "count": len(result or []),
+                    "duration_ms": duration_ms(start),
+                }
+                tool.end(output=summary, metadata=summary)
+                return result
+            except Exception as err:
+                summary = {"toolName": "get_recent_transactions", "success": False, "purpose": "recent_by_email", "error": str(err), "duration_ms": duration_ms(start)}
+                tool.end(output=summary, metadata=summary)
+                raise
 
         async def count_monthly_outgoing_transfers(self, *, email, since):
-            return repo.count_monthly_outgoing_transfers(email=email, since=since)
+            start = now_ms()
+            tool = start_tool(
+                name="get_recent_transactions",
+                input={"email": mask_email(email), "hasEmail": bool(email), "hasSince": bool(since)},
+                metadata={"toolName": "get_recent_transactions", "purpose": "monthly_outgoing_count"},
+            )
+            try:
+                count = repo.count_monthly_outgoing_transfers(email=email, since=since)
+                summary = {
+                    "toolName": "get_recent_transactions",
+                    "success": True,
+                    "purpose": "monthly_outgoing_count",
+                    "count": count,
+                    "duration_ms": duration_ms(start),
+                }
+                tool.end(output=summary, metadata=summary)
+                return count
+            except Exception as err:
+                summary = {"toolName": "get_recent_transactions", "success": False, "purpose": "monthly_outgoing_count", "error": str(err), "duration_ms": duration_ms(start)}
+                tool.end(output=summary, metadata=summary)
+                raise
 
         async def find_transactions_by_user_id(self, user_id, options=None):
             return repo.find_transactions_by_user_id(user_id, options or {})
