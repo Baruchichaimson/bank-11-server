@@ -3,6 +3,13 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
+
+def _get_env_int(name: str, default: int) -> int:
+    raw_value = os.environ.get(name, "").strip()
+    if not raw_value:
+        return default
+    return int(raw_value)
+
 PORT = int(os.environ.get("PORT", 3000))
 MONGO_URI = os.environ.get("MONGO_URI", "mongodb://127.0.0.1:27017/bank-11")
 JWT_SECRET = os.environ.get("JWT_SECRET", "")
@@ -50,6 +57,10 @@ LANGFUSE_SECRET_KEY = os.environ.get("LANGFUSE_SECRET_KEY", "")
 LANGFUSE_BASE_URL = os.environ.get("LANGFUSE_BASE_URL", "https://cloud.langfuse.com")
 LANGFUSE_CAPTURE_IO = os.environ.get("LANGFUSE_CAPTURE_IO", "false").lower() == "true"
 ASSISTANT_TRACE_LOGS = os.environ.get("ASSISTANT_TRACE_LOGS", "false").lower() == "true"
+
+GCS_BUCKET_NAME = os.environ.get("GCS_BUCKET_NAME", "")
+GCS_SIGNED_URL_MINUTES = _get_env_int("GCS_SIGNED_URL_MINUTES", 5)
+GCS_SIGNING_SERVICE_ACCOUNT_EMAIL = os.environ.get("GCS_SIGNING_SERVICE_ACCOUNT_EMAIL", "")
 
 PENDING_REGISTRATION_CLEANUP_INTERVAL_MS = int(
     os.environ.get("PENDING_REGISTRATION_CLEANUP_INTERVAL_MS", str(60 * 60 * 1000))

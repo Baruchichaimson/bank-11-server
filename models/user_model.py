@@ -9,6 +9,7 @@ password field is excluded by default (select: false equivalent).
 from datetime import datetime, timezone
 from bson import ObjectId
 from config.db import get_db
+from utils.avatar_utils import random_avatar_object_name
 
 COLLECTION = "users"
 
@@ -43,12 +44,14 @@ def _strip_password(doc: dict | None) -> dict | None:
 
 def create_user(data: dict) -> dict:
     now = _now()
+    avatar_object_name = str(data.get("avatarObjectName") or "").strip() or random_avatar_object_name()
     doc = {
         "firstName": str(data.get("firstName", "")).strip(),
         "lastName": str(data.get("lastName", "")).strip(),
         "email": str(data.get("email", "")).lower().strip(),
         "phoneNumber": str(data.get("phoneNumber", "")).strip(),
         "password": data.get("password", ""),
+        "avatarObjectName": avatar_object_name,
         "isVerified": bool(data.get("isVerified", False)),
         "verificationToken": data.get("verificationToken"),
         "verificationExpires": data.get("verificationExpires"),

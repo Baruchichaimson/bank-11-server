@@ -47,6 +47,9 @@ See `.env.example` for the full list with descriptions.
 | `BREVO_API_KEY` | no | — | Brevo email API key |
 | `OPENAI_API_KEY` | no | — | OpenAI key (AI assistant feature) |
 | `AI_PROVIDER` | no | `openai` | `openai` / `ollama` / `groq` |
+| `GCS_BUCKET_NAME` | **yes** | — | Private bucket that stores avatar objects |
+| `GCS_SIGNED_URL_MINUTES` | no | `5` | Signed avatar URL lifetime in minutes |
+| `GCS_SIGNING_SERVICE_ACCOUNT_EMAIL` | no | — | Service account email used for URL signing |
 
 ---
 
@@ -120,6 +123,12 @@ All routes are identical to the original Node.js backend.
 | Method | Path | Auth |
 |---|---|---|
 | GET | `/api/v1/accounts/me` | JWT + verified |
+
+### Users
+
+| Method | Path | Auth |
+|---|---|---|
+| GET | `/api/v1/users/me/avatar` | JWT + verified |
 
 ### Transactions
 

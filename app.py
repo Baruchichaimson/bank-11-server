@@ -23,6 +23,7 @@ from routes.health_routes import health_bp
 from routes.auth_routes import auth_bp
 from routes.accounts_routes import accounts_bp
 from routes.transactions_routes import transactions_bp
+from routes.users_routes import users_bp
 
 
 def create_app(testing: bool = False) -> Flask:
@@ -59,6 +60,7 @@ def create_app(testing: bool = False) -> Flask:
     flask_app.register_blueprint(auth_bp,          url_prefix="/api/v1/auth")
     flask_app.register_blueprint(accounts_bp,      url_prefix="/api/v1/accounts")
     flask_app.register_blueprint(transactions_bp,  url_prefix="/api/v1/transactions")
+    flask_app.register_blueprint(users_bp,         url_prefix="/api/v1/users")
 
     return flask_app
 

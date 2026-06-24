@@ -21,6 +21,7 @@ from models.user_model import (
     bump_token_version_by_id,
 )
 from models.account_model import find_account_by_user_id, update_account_status, create_account
+from utils.avatar_utils import random_avatar_object_name
 from utils.validators import is_valid_email, is_valid_phone
 from utils.email_service import send_verification_email, send_password_reset_email
 
@@ -115,25 +116,14 @@ def signup():
             pending_user["email"] = normalized_email
             pending_user["phoneNumber"] = normalized_phone
             pending_user["password"] = password_hash
+            pending_user["avatarObjectName"] = (
+                str(pending_user.get("avatarObjectName") or "").strip()
+                or random_avatar_object_name()
+            )
             pending_user["isVerified"] = False
             pending_user["verificationToken"] = verification_token
             pending_user["verificationExpires"] = verification_expires
-            from models.user_model import _col as user_col, _now
-            from bson import ObjectId
-            user_col().update_one(
-                {"_id": pending_user["_id"]},
-                {"$set": {
-                    "firstName": pending_user["firstName"],
-                    "lastName": pending_user["lastName"],
-                    "email": pending_user["email"],
-                    "phoneNumber": pending_user["phoneNumber"],
-                    "password": pending_user["password"],
-                    "isVerified": False,
-                    "verificationToken": verification_token,
-                    "verificationExpires": verification_expires,
-                    "updatedAt": _now(),
-                }}
-            )
+            save_user(pending_user)
         else:
             create_user({
                 "firstName": str(first_name).strip(),
@@ -141,6 +131,7 @@ def signup():
                 "email": normalized_email,
                 "phoneNumber": normalized_phone,
                 "password": password_hash,
+                "avatarObjectName": random_avatar_object_name(),
                 "isVerified": False,
                 "verificationToken": verification_token,
                 "verificationExpires": verification_expires,
