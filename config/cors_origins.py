@@ -1,6 +1,7 @@
 from config.settings import CORS_ORIGINS, SOCKET_CORS_ORIGINS, FRONTEND_BASE_URL
 
 DEFAULT_ORIGINS = [
+    "http://35.187.14.48:3000"
     "http://localhost:5173",
     "http://127.0.0.1:5173",
     "http://localhost:4173",
