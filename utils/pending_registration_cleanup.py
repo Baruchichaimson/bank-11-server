@@ -3,9 +3,12 @@ Periodic cleanup of expired, unverified user registrations.
 Uses APScheduler for background job scheduling.
 """
 
+import logging
 from datetime import datetime, timezone
 from apscheduler.schedulers.background import BackgroundScheduler
 from config.settings import PENDING_REGISTRATION_CLEANUP_INTERVAL_MS
+
+logger = logging.getLogger(__name__)
 
 
 def cleanup_expired_pending_registrations() -> dict:
@@ -32,12 +35,12 @@ def _run_cleanup():
     try:
         result = cleanup_expired_pending_registrations()
         if result["deletedUsers"] or result["deletedAccounts"]:
-            print(
+            logger.info(
                 f"Cleaned expired pending registrations: "
                 f"users={result['deletedUsers']}, accounts={result['deletedAccounts']}"
             )
     except Exception as err:
-        print(f"Pending registration cleanup failed: {err}")
+        logger.error("Pending registration cleanup failed: %s", err)
 
 
 def start_pending_registration_cleanup() -> BackgroundScheduler:
