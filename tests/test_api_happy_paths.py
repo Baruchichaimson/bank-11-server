@@ -112,6 +112,18 @@ def test_transactions_create_happy_path_returns_completed_transaction(client, mo
 
     monkeypatch.setattr(
         user_model,
+        "find_user_by_id",
+        MagicMock(
+            return_value={
+                "_id": "user-1",
+                "email": "api@example.com",
+                "isVerified": True,
+                "tokenVersion": 3,
+            }
+        ),
+    )
+    monkeypatch.setattr(
+        transactions_controller,
         "find_user_by_email",
         MagicMock(return_value={"_id": "user-2", "email": "receiver@example.com"}),
     )

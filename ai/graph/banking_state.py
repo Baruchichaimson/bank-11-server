@@ -21,6 +21,10 @@ class BankingState(TypedDict, total=False):
     support: Any
     personalDetails: Any
     risk: Any
+    riskAnalysis: Any
+    deterministicRisk: Any
+    riskJudge: Any
+    riskDecision: Any
     execution: Any
     workflowResponse: Any
     ui: Any
@@ -74,6 +78,10 @@ def create_initial_banking_state(
         "support": {"ticketId": None},
         "personalDetails": {"userProfile": None},
         "risk": {"level": None, "triggeredRules": [], "requiresApproval": False},
+        "riskAnalysis": None,
+        "deterministicRisk": None,
+        "riskJudge": None,
+        "riskDecision": None,
         "execution": {"executed": False, "operation": None, "result": None},
         "workflowResponse": create_empty_workflow_response(),
         "ui": {"message": "", "form": None, "suggestions": [], "action": None},

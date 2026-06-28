@@ -6,11 +6,15 @@ Uses langgraph StateGraph with BankingState TypedDict.
 from langchain_core.runnables import RunnableConfig
 from langgraph.graph import StateGraph, START, END
 from langgraph.checkpoint.memory import MemorySaver
+import inspect
+import json
+from pathlib import Path
 import time
 from ai.graph.banking_state import BankingState, create_initial_banking_state
 from ai.graph.workflow_router import route_workflow
 from ai.intents.detect_intent import detect_intent
 from ai.contracts.assistant_response_contract import normalize_workflow_response
+from ai.contracts.risk_analysis_contract import normalize_risk_analysis
 from ai.assistant.shared import detect_language, create_reply_payload
 from ai.shared.json_safe import make_json_safe
 from config.settings import BANKING_GRAPH_DEBUG
@@ -156,6 +160,274 @@ def _get_services(config):
     return (config or {}).get("configurable", {}).get("services")
 
 
+def _is_transfer_workflow(state: dict) -> bool:
+    return (state.get("workflow") or {}).get("activeWorkflow") == "transfer_workflow"
+
+
+def _safe_float(value):
+    if value is None or value == "":
+        return None
+    try:
+        number = float(value)
+        return number if number == number else None
+    except (TypeError, ValueError):
+        return None
+
+
+async def _maybe_await(value):
+    if inspect.isawaitable(value):
+        return await value
+    return value
+
+
+def _risk_transfer_payload(state: dict) -> dict:
+    transfer = state.get("transfer") or {}
+    intent = state.get("intent") or {}
+    intent_payload = intent.get("transferPayload") or {}
+    session = state.get("session") or {}
+    return {
+        "userId": state.get("userId") or session.get("userId"),
+        "userEmail": session.get("userEmail"),
+        "senderEmail": session.get("userEmail"),
+        "receiverEmail": transfer.get("receiverEmail") or intent_payload.get("receiverEmail"),
+        "amount": _safe_float(
+            transfer.get("amount")
+            if transfer.get("amount") is not None
+            else intent_payload.get("amount")
+        ),
+        "senderBalance": _safe_float(
+            transfer.get("senderBalance")
+            or transfer.get("balance")
+            or intent_payload.get("senderBalance")
+        ),
+    }
+
+
+def _history_summary(history: list) -> dict:
+    items = history or []
+    preview = []
+    for item in items[-3:]:
+        if not isinstance(item, dict):
+            continue
+        preview.append({
+            "role": item.get("role"),
+            "content": text_preview(item.get("content", ""), max_chars=80),
+        })
+    return {"count": len(items), "recentPreview": preview}
+
+
+async def _enrich_risk_payload_from_services(payload: dict, services: dict | None) -> dict:
+    services = services or {}
+    profile_service = services.get("profileService")
+    account_service = services.get("accountService")
+    user_id = payload.get("userId")
+    enriched = dict(payload)
+
+    sender_user = None
+    if profile_service and user_id and not enriched.get("senderEmail"):
+        getter = getattr(profile_service, "getUserById", None)
+        if getter:
+            try:
+                sender_user = await _maybe_await(getter(user_id))
+                enriched["senderEmail"] = str((sender_user or {}).get("email") or "").lower() or None
+            except Exception:
+                sender_user = None
+
+    if account_service and user_id and enriched.get("senderBalance") is None:
+        getter = getattr(account_service, "get_account_by_user_id", None)
+        if getter:
+            try:
+                account = await _maybe_await(getter(str((sender_user or {}).get("_id") or user_id)))
+                enriched["senderBalance"] = _safe_float((account or {}).get("balance"))
+            except Exception:
+                pass
+
+    return enriched
+
+
+def _not_evaluated_deterministic_risk(reason: str, payload: dict) -> dict:
+    return {
+        "status": "not_evaluated",
+        "level": None,
+        "score": None,
+        "requiresReview": False,
+        "reasons": [reason],
+        "checks": {
+            "hasSenderEmail": bool(payload.get("senderEmail")),
+            "hasReceiverEmail": bool(payload.get("receiverEmail")),
+            "hasAmount": payload.get("amount") is not None,
+            "hasSenderBalance": payload.get("senderBalance") is not None,
+        },
+    }
+
+
+def _risk_payload_complete(payload: dict) -> bool:
+    return bool(
+        payload.get("senderEmail")
+        and payload.get("receiverEmail")
+        and payload.get("amount") is not None
+        and payload.get("senderBalance") is not None
+    )
+
+
+def _read_risk_analysis_prompt() -> str:
+    path = Path(__file__).resolve().parents[2] / "prompts" / "risk_analysis.md"
+    try:
+        return path.read_text(encoding="utf-8")
+    except Exception:
+        return (
+            "You are a bank transfer risk analysis model. Return JSON only with "
+            '{"level":"LOW|MEDIUM|HIGH","reason":"..."}'
+        )
+
+
+def _extract_llm_content(response) -> str:
+    try:
+        return response.choices[0].message.content
+    except Exception:
+        pass
+    if isinstance(response, dict):
+        choices = response.get("choices") or []
+        if choices:
+            message = (choices[0] or {}).get("message") or {}
+            return message.get("content") or ""
+    return ""
+
+
+async def deterministic_risk_node(state: dict, config: RunnableConfig | None = None) -> dict:
+    if not _is_transfer_workflow(state):
+        return state
+
+    services = _get_services(config) or {}
+    payload = await _enrich_risk_payload_from_services(_risk_transfer_payload(state), services)
+    span = start_span(
+        name="deterministic_risk_node",
+        input={
+            "hasSenderEmail": bool(payload.get("senderEmail")),
+            "hasReceiverEmail": bool(payload.get("receiverEmail")),
+            "hasAmount": payload.get("amount") is not None,
+            "hasSenderBalance": payload.get("senderBalance") is not None,
+        },
+        metadata={"workflow_name": "transfer_workflow"},
+    )
+
+    if not _risk_payload_complete(payload):
+        result = _not_evaluated_deterministic_risk("Transfer details incomplete; deterministic risk not evaluated.", payload)
+    else:
+        try:
+            risk_service = services.get("riskService")
+            if not risk_service:
+                from ai.services.risk_service import create_risk_service
+                risk_service = create_risk_service()
+            evaluator = getattr(risk_service, "evaluateRisk", None) or getattr(risk_service, "evaluate_risk", None)
+            result = evaluator({
+                "senderEmail": str(payload.get("senderEmail") or "").lower(),
+                "receiverEmail": str(payload.get("receiverEmail") or "").lower(),
+                "amount": payload.get("amount"),
+                "senderBalance": payload.get("senderBalance"),
+            }) if evaluator else _not_evaluated_deterministic_risk("Risk service unavailable.", payload)
+        except Exception as err:
+            result = {
+                **_not_evaluated_deterministic_risk("Deterministic risk evaluation failed.", payload),
+                "error": str(err),
+            }
+
+    summary = {
+        "level": result.get("level"),
+        "score": result.get("score"),
+        "requiresReview": result.get("requiresReview"),
+        "reasonCount": len(result.get("reasons") or []),
+    }
+    span.end(output=summary, metadata=summary)
+    record_event(name="deterministic_risk_evaluated", metadata=summary)
+
+    return make_json_safe({
+        **state,
+        "deterministicRisk": result,
+        "audit": {
+            **(state.get("audit") or {}),
+            "aiDecisions": [*((state.get("audit") or {}).get("aiDecisions") or []), {"node": "deterministic_risk_node", **summary}],
+        },
+    })
+
+
+async def risk_analysis_node(state: dict, config: RunnableConfig | None = None) -> dict:
+    if not _is_transfer_workflow(state):
+        return state
+
+    configurable = (config or {}).get("configurable") or {}
+    create_chat_completion = configurable.get("createChatCompletion")
+    payload = await _enrich_risk_payload_from_services(_risk_transfer_payload(state), configurable.get("services"))
+    llm_payload = {
+        "operation": "risk_analysis",
+        "userId": payload.get("userId"),
+        "userEmail": payload.get("userEmail"),
+        "senderEmail": payload.get("senderEmail"),
+        "receiverEmail": payload.get("receiverEmail"),
+        "amount": payload.get("amount"),
+        "senderBalance": payload.get("senderBalance"),
+        "historySummary": _history_summary(state.get("history") or []),
+        "deterministicRisk": state.get("deterministicRisk"),
+    }
+    span = start_span(
+        name="risk_analysis_node",
+        input={
+            "operation": "risk_analysis",
+            "hasAmount": payload.get("amount") is not None,
+            "hasReceiverEmail": bool(payload.get("receiverEmail")),
+            "hasDeterministicRisk": bool(state.get("deterministicRisk")),
+        },
+        metadata={"operation": "risk_analysis"},
+    )
+
+    parsed = {}
+    if create_chat_completion and _risk_payload_complete(payload):
+        try:
+            response = await create_chat_completion({
+                "temperature": 0,
+                "response_format": {"type": "json_object"},
+                "operation": "risk_analysis",
+                "messages": [
+                    {"role": "system", "content": _read_risk_analysis_prompt()},
+                    {"role": "user", "content": json.dumps(make_json_safe(llm_payload), ensure_ascii=False)},
+                ],
+            })
+            content = _extract_llm_content(response)
+            parsed = json.loads(str(content or "").strip())
+            if not isinstance(parsed, dict):
+                parsed = {}
+            if getattr(response, "model", None) and not parsed.get("model"):
+                parsed["model"] = getattr(response, "model")
+            if getattr(response, "provider", None) and not parsed.get("provider"):
+                parsed["provider"] = getattr(response, "provider")
+        except Exception as err:
+            parsed = {"reason": f"Risk analysis LLM output unavailable or invalid: {err}"}
+    elif not _risk_payload_complete(payload):
+        parsed = {"reason": "Transfer details incomplete; risk analysis unavailable."}
+    else:
+        parsed = {"reason": "Risk analysis LLM unavailable."}
+
+    normalized = normalize_risk_analysis(parsed)
+    summary = {
+        "operation": "risk_analysis",
+        "provider": normalized.get("provider"),
+        "model": normalized.get("model"),
+        "level": normalized.get("level"),
+        "reasonPreview": text_preview(normalized.get("reason", ""), max_chars=120),
+    }
+    span.end(output=summary, metadata=summary)
+    record_event(name="risk_analysis_completed", metadata=summary)
+
+    return make_json_safe({
+        **state,
+        "riskAnalysis": normalized,
+        "audit": {
+            **(state.get("audit") or {}),
+            "aiDecisions": [*((state.get("audit") or {}).get("aiDecisions") or []), {"node": "risk_analysis_node", **summary}],
+        },
+    })
+
+
 async def _run_workflow_with_trace(*, workflow_name: str, func, state: dict, config: RunnableConfig | None = None, services=None):
     start = time.perf_counter()
     span = start_span(
@@ -248,6 +520,8 @@ def create_banking_graph():
     graph.add_node("user_request", user_request_node)
     graph.add_node("find_intent", find_intent_node)
     graph.add_node("workflow_router", workflow_router_node)
+    graph.add_node("deterministic_risk_node", deterministic_risk_node)
+    graph.add_node("risk_analysis_node", risk_analysis_node)
     graph.add_node("transfer_workflow", run_transfer_workflow_node)
     graph.add_node("transactions_workflow", run_transactions_workflow_node)
     graph.add_node("balance_workflow", run_balance_workflow_node)
@@ -260,13 +534,15 @@ def create_banking_graph():
     graph.add_edge("user_request", "find_intent")
     graph.add_edge("find_intent", "workflow_router")
     graph.add_conditional_edges("workflow_router", _route_to_workflow, {
-        "transfer_workflow": "transfer_workflow",
+        "transfer_workflow": "deterministic_risk_node",
         "transactions_workflow": "transactions_workflow",
         "balance_workflow": "balance_workflow",
         "support_workflow": "support_workflow",
         "personal_details_workflow": "personal_details_workflow",
         "unknown_workflow": "unknown_workflow",
     })
+    graph.add_edge("deterministic_risk_node", "risk_analysis_node")
+    graph.add_edge("risk_analysis_node", "transfer_workflow")
     graph.add_edge("transfer_workflow", "return_response")
     graph.add_edge("transactions_workflow", "return_response")
     graph.add_edge("balance_workflow", "return_response")
