@@ -7,6 +7,7 @@ import json
 import re
 import sys
 import time
+from ai.llm import invoke_llm_json
 from ai.intents.semantic_catalog import (
     ALLOWED_DOMAINS, ALLOWED_INTENTS, ALLOWED_TOOL_NAMES, TOOL_BY_NAME,
     ALLOWED_AGGREGATIONS, ALLOWED_ACTIONS, ALLOWED_TYPES, ALLOWED_DIRECTIONS,
@@ -491,19 +492,20 @@ async def parse_query_with_llm(*, user_input: str, history: list, create_chat_co
 
     try:
         system_prompt = build_semantic_parser_prompt()
-        import json
         payload = build_user_prompt_payload(user_input=user_input, history=history)
         payload_json = json.dumps(payload, ensure_ascii=False)
-        messages = [
+        prompt_chars = len(system_prompt) + len(payload_json)
+        prompt_token_estimate = _estimate_prompt_tokens([
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": payload_json},
-        ]
-        prompt_chars = sum(len(message["content"]) for message in messages)
-        prompt_token_estimate = _estimate_prompt_tokens(messages)
+        ])
         current_message_preview = text_preview(user_input)
         parser_span = start_span(
             name="llm_semantic_parser",
-            input=messages if capture_io_enabled() else {
+            input=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": payload_json},
+            ] if capture_io_enabled() else {
                 "currentUserMessage": current_message_preview,
                 "recentConversationCount": len(payload.get("recentConversation") or []),
                 "promptChars": prompt_chars,
@@ -517,6 +519,7 @@ async def parse_query_with_llm(*, user_input: str, history: list, create_chat_co
                 "recentConversationCount": len(payload.get("recentConversation") or []),
                 "promptChars": prompt_chars,
                 "promptTokenEstimate": prompt_token_estimate,
+                "operation": "user_intent",
             },
         )
         trace_log(
@@ -525,25 +528,15 @@ async def parse_query_with_llm(*, user_input: str, history: list, create_chat_co
             f"prompt_chars={prompt_chars} prompt_tokens_est={prompt_token_estimate} model={ACTIVE_AI_MODEL}"
         )
 
-        response = await create_chat_completion({
-            "temperature": 0,
-            "top_p": 1,
-            "response_format": {"type": "json_object"},
-            "messages": messages,
-            "langfuse_name": "llm_semantic_parser.openai",
-            "metadata": {
-                "component": "semantic_parser",
-                "currentUserMessage": current_message_preview,
-                "recentConversationCount": len(payload.get("recentConversation") or []),
-                "promptChars": prompt_chars,
-                "promptTokenEstimate": prompt_token_estimate,
-            },
-        })
-
-        raw_content = (response.choices[0].message.content or "") if response else ""
-        parsed = json.loads(raw_content.strip())
+        parsed = await invoke_llm_json(
+            operation="user_intent",
+            variables=payload,
+            create_chat_completion=create_chat_completion,
+            abort_signal=abort_signal,
+        )
         validated = validate_llm_semantic_parse(parsed)
         validation_reason = None
+        raw_content = json.dumps(parsed, ensure_ascii=False)
         if not validated:
             validation_reason = _describe_validation_failure(parsed)
             semantic_query = parsed.get("semanticQuery") if isinstance(parsed, dict) else None
@@ -560,7 +553,7 @@ async def parse_query_with_llm(*, user_input: str, history: list, create_chat_co
             sys.stderr.flush()
             parser_span.end(
                 output={
-                    "raw": raw_content if capture_io_enabled() else text_preview(raw_content),
+                    "raw": parsed if capture_io_enabled() else text_preview(parsed),
                     "parsed": parsed,
                     "validation": False,
                     "validationFailureReason": validation_reason,
@@ -594,7 +587,7 @@ async def parse_query_with_llm(*, user_input: str, history: list, create_chat_co
             return None
         parser_span.end(
             output={
-                "raw": raw_content if capture_io_enabled() else text_preview(raw_content),
+                "raw": parsed if capture_io_enabled() else text_preview(parsed),
                 "parsed": parsed,
                 "validated": {
                     "domain": validated.get("domain"),

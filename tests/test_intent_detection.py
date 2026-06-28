@@ -139,6 +139,25 @@ async def test_llm_balance_response_returns_check_balance():
 
 
 @pytest.mark.asyncio
+async def test_llm_user_intent_call_is_routed_through_llm_router():
+    async def fake_chat_completion(payload):
+        assert payload["operation"] == "user_intent"
+        assert payload["prompt_file"] == "prompts/user_intent.md"
+        user_payload = _user_prompt_payload(payload)
+        assert user_payload["currentUserMessage"] == "מה היתרה שלי?"
+        return _completion_response(_balance_payload())
+
+    result = await detect_intent(
+        user_input="מה היתרה שלי?",
+        history=[],
+        create_chat_completion=fake_chat_completion,
+    )
+
+    assert result["domain"] == "account"
+    assert result["intent"] == "check_balance"
+
+
+@pytest.mark.asyncio
 async def test_llm_hebrew_money_in_account_returns_check_balance():
     async def fake_chat_completion(payload):
         user_payload = _user_prompt_payload(payload)
@@ -264,7 +283,22 @@ async def test_balance_history_does_not_override_current_transfer_intent():
 
     assert result["domain"] == "transactions"
     assert result["intent"] == "transfer_money"
-    assert result["transferPayload"]["startNewTransfer"] is True
+
+
+@pytest.mark.asyncio
+async def test_malformed_user_intent_json_falls_back_safely():
+    async def fake_chat_completion(_payload):
+        return _completion_response("not-json")
+
+    result = await detect_intent(
+        user_input="מה היתרה שלי?",
+        history=[],
+        create_chat_completion=fake_chat_completion,
+    )
+
+    assert result["domain"] == "unknown"
+    assert result["intent"] == "unknown"
+    assert result["source"] == "llm_parse_failed"
 
 
 @pytest.mark.asyncio

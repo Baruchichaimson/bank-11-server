@@ -7,8 +7,6 @@ from langchain_core.runnables import RunnableConfig
 from langgraph.graph import StateGraph, START, END
 from langgraph.checkpoint.memory import MemorySaver
 import inspect
-import json
-from pathlib import Path
 import time
 from ai.graph.banking_state import BankingState, create_initial_banking_state
 from ai.graph.workflow_router import route_workflow
@@ -16,6 +14,7 @@ from ai.intents.detect_intent import detect_intent
 from ai.contracts.assistant_response_contract import create_workflow_response, normalize_workflow_response
 from ai.contracts.risk_analysis_contract import normalize_risk_analysis
 from ai.contracts.risk_judge_contract import normalize_risk_judge
+from ai.llm import invoke_llm_json
 from ai.assistant.shared import detect_language, create_reply_payload
 from ai.shared.json_safe import make_json_safe
 from config.settings import BANKING_GRAPH_DEBUG
@@ -279,41 +278,6 @@ def _deterministic_risk_was_evaluated(value: dict | None) -> bool:
     return isinstance(value, dict) and value.get("status") != "not_evaluated"
 
 
-def _read_risk_analysis_prompt() -> str:
-    path = Path(__file__).resolve().parents[2] / "prompts" / "risk_analysis.md"
-    try:
-        return path.read_text(encoding="utf-8")
-    except Exception:
-        return (
-            "You are a bank transfer risk analysis model. Return JSON only with "
-            '{"level":"LOW|MEDIUM|HIGH","reason":"..."}'
-        )
-
-
-def _read_risk_judge_prompt() -> str:
-    path = Path(__file__).resolve().parents[2] / "prompts" / "risk_judge.md"
-    try:
-        return path.read_text(encoding="utf-8")
-    except Exception:
-        return (
-            "You are a bank transfer risk judge. Return JSON only with "
-            '{"approval":"ACCEPTED|DENIED","reason":"..."}'
-        )
-
-
-def _extract_llm_content(response) -> str:
-    try:
-        return response.choices[0].message.content
-    except Exception:
-        pass
-    if isinstance(response, dict):
-        choices = response.get("choices") or []
-        if choices:
-            message = (choices[0] or {}).get("message") or {}
-            return message.get("content") or ""
-    return ""
-
-
 async def deterministic_risk_node(state: dict, config: RunnableConfig | None = None) -> dict:
     if not _is_transfer_workflow(state):
         return state
@@ -403,23 +367,12 @@ async def risk_analysis_node(state: dict, config: RunnableConfig | None = None) 
     parsed = {}
     if create_chat_completion and _risk_payload_complete(payload):
         try:
-            response = await create_chat_completion({
-                "temperature": 0,
-                "response_format": {"type": "json_object"},
-                "operation": "risk_analysis",
-                "messages": [
-                    {"role": "system", "content": _read_risk_analysis_prompt()},
-                    {"role": "user", "content": json.dumps(make_json_safe(llm_payload), ensure_ascii=False)},
-                ],
-            })
-            content = _extract_llm_content(response)
-            parsed = json.loads(str(content or "").strip())
-            if not isinstance(parsed, dict):
-                parsed = {}
-            if getattr(response, "model", None) and not parsed.get("model"):
-                parsed["model"] = getattr(response, "model")
-            if getattr(response, "provider", None) and not parsed.get("provider"):
-                parsed["provider"] = getattr(response, "provider")
+            parsed = await invoke_llm_json(
+                "risk_analysis",
+                llm_payload,
+                create_chat_completion=create_chat_completion,
+                abort_signal=configurable.get("abortSignal"),
+            )
         except Exception as err:
             parsed = {"reason": f"Risk analysis LLM output unavailable or invalid: {err}"}
     elif not _risk_payload_complete(payload):
@@ -516,23 +469,12 @@ async def risk_judge_node(state: dict, config: RunnableConfig | None = None) -> 
     success = True
     if create_chat_completion:
         try:
-            response = await create_chat_completion({
-                "temperature": 0,
-                "response_format": {"type": "json_object"},
-                "operation": "risk_judge",
-                "messages": [
-                    {"role": "system", "content": _read_risk_judge_prompt()},
-                    {"role": "user", "content": json.dumps(make_json_safe(llm_payload), ensure_ascii=False)},
-                ],
-            })
-            content = _extract_llm_content(response)
-            parsed = json.loads(str(content or "").strip())
-            if not isinstance(parsed, dict):
-                parsed = {}
-            if getattr(response, "model", None) and not parsed.get("model"):
-                parsed["model"] = getattr(response, "model")
-            if getattr(response, "provider", None) and not parsed.get("provider"):
-                parsed["provider"] = getattr(response, "provider")
+            parsed = await invoke_llm_json(
+                "risk_judge",
+                llm_payload,
+                create_chat_completion=create_chat_completion,
+                abort_signal=configurable.get("abortSignal"),
+            )
         except Exception as err:
             success = False
             parsed = {"reason": f"Risk judge LLM output unavailable or invalid: {err}"}
