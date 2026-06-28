@@ -1,0 +1,17 @@
+{
+  "default": {
+    "name": "default",
+    "description": "Clear, helpful banking assistant voice.",
+    "tone": "neutral"
+  },
+  "young": {
+    "name": "young",
+    "description": "Friendly, concise banking assistant voice for younger users.",
+    "tone": "casual"
+  },
+  "formal": {
+    "name": "formal",
+    "description": "Professional banking assistant voice with formal wording.",
+    "tone": "formal"
+  }
+}

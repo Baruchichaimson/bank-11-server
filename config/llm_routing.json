@@ -1,0 +1,57 @@
+{
+  "operations": {
+    "user_intent": {
+      "provider": "openai",
+      "model": "gpt-4o-mini",
+      "temperature": 0,
+      "top_p": 1,
+      "max_tokens": 500,
+      "response_format": {
+        "type": "json_object"
+      },
+      "prompt_file": "prompts/user_intent.md",
+      "cost_tier": "low"
+    },
+    "transfer_field_extraction": {
+      "provider": "openai",
+      "model": "gpt-4o-mini",
+      "temperature": 0,
+      "top_p": 1,
+      "max_tokens": 700,
+      "response_format": {
+        "type": "json_object"
+      },
+      "prompt_file": "prompts/transfer_field_extraction.md",
+      "cost_tier": "low"
+    },
+    "risk_analysis": {
+      "provider": "openai",
+      "model": "gpt-4o-mini",
+      "temperature": 0,
+      "top_p": 1,
+      "max_tokens": 900,
+      "response_format": {
+        "type": "json_object"
+      },
+      "prompt_file": "prompts/risk_analysis.md",
+      "cost_tier": "low"
+    },
+    "risk_judge": {
+      "provider": "openai",
+      "model": "gpt-4o",
+      "temperature": 0,
+      "top_p": 1,
+      "max_tokens": 700,
+      "response_format": {
+        "type": "json_object"
+      },
+      "prompt_file": "prompts/risk_judge.md",
+      "cost_tier": "medium"
+    }
+  },
+  "supported_providers": [
+    "openai",
+    "groq",
+    "ollama"
+  ]
+}
