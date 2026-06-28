@@ -56,6 +56,10 @@ async def test_low_or_medium_analysis_with_accepted_judge_and_low_deterministic_
     result = await risk_decision_node(_state(analysis_level=level), _config())
 
     assert result["riskDecision"]["allowed"] is True
+    assert "Risk checks passed" in result["riskDecision"]["reason"]
+    assert result["audit"]["aiDecisions"][-1]["status"] == "evaluated"
+    assert result["audit"]["aiDecisions"][-1]["allowed"] is True
+    assert "risk" in result["audit"]["aiDecisions"][-1]["reasonPreview"]["preview"].lower()
     assert await _route_after_risk_decision(result) == "transfer_workflow"
 
 

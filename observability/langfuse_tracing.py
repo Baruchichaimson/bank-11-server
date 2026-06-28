@@ -115,6 +115,32 @@ def text_preview(value, *, max_chars=160) -> dict:
     return {"preview": _sanitize_text(preview), "length": len(text)}
 
 
+def preview_dict(value, *, keys: list[str] | tuple[str, ...] | None = None, max_items: int = 5, max_chars: int = 160) -> dict:
+    if not isinstance(value, Mapping):
+        return {}
+    selected_keys = list(keys or value.keys())
+    preview = {}
+    for key in selected_keys[:max_items]:
+        if key not in value:
+            continue
+        item = value.get(key)
+        if isinstance(item, str):
+            preview[str(key)] = text_preview(item, max_chars=max_chars)
+        elif isinstance(item, Mapping):
+            preview[str(key)] = sanitize_for_trace(item)
+        elif isinstance(item, (list, tuple, set, frozenset)):
+            preview[str(key)] = {"count": len(item)}
+        else:
+            preview[str(key)] = sanitize_for_trace(item)
+    return preview
+
+
+def safe_metadata(value) -> dict:
+    if not isinstance(value, Mapping):
+        return {}
+    return sanitize_for_trace(value)
+
+
 def _sanitize_mapping(value: Mapping, *, depth: int):
     output = {}
     for key, item in value.items():
@@ -460,7 +486,10 @@ def update_trace_fields(**fields):
     current = dict(_trace_fields.get() or {})
     current.update({k: v for k, v in fields.items() if v is not None})
     _trace_fields.set(current)
-    get_current_trace().update(metadata=current)
+    try:
+        get_current_trace().update(metadata=current)
+    except Exception as err:
+        trace_log(f"langfuse_update_trace_fields_error error={err}")
 
 
 def get_trace_fields() -> dict:

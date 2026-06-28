@@ -4,12 +4,15 @@ from observability.langfuse_tracing import (
     get_langfuse_client,
     get_current_observation_context,
     is_langfuse_enabled,
+    preview_dict,
     sanitize_for_trace,
+    safe_metadata,
     set_trace_context,
     start_span,
     start_tool,
     start_trace,
     reset_trace_context,
+    update_trace_fields,
 )
 import observability.langfuse_tracing as langfuse_tracing
 
@@ -53,6 +56,40 @@ def test_sanitize_for_trace_masks_sensitive_fields_and_email(monkeypatch):
         "hasDescription": False,
         "confirmation": None,
     }
+
+
+def test_safe_metadata_and_preview_dict_keep_reasonably_small(monkeypatch):
+    monkeypatch.setenv("LANGFUSE_CAPTURE_IO", "false")
+
+    metadata = safe_metadata({
+        "authorization": "Bearer secret-token",
+        "reason": "Transfer of 1200 ILS to person@example.com",
+        "nested": {"access_token": "secret"},
+    })
+    preview = preview_dict({
+        "reason": "Transfer of 1200 ILS to person@example.com",
+        "nested": {"email": "person@example.com"},
+    }, keys=("reason", "nested"))
+
+    assert metadata["authorization"] == "[redacted]"
+    assert metadata["reason"] == "Transfer of [amount] to p***@example.com"
+    assert metadata["nested"] == {"access_token": "[redacted]"}
+    assert preview["reason"]["preview"] == "Transfer of [amount] to p***@example.com"
+    assert preview["nested"] == {"email": "p***@example.com"}
+
+
+def test_update_trace_fields_swallow_trace_update_errors(monkeypatch):
+    class BrokenObservation:
+        def update(self, **_kwargs):
+            raise RuntimeError("boom")
+
+    class DummyTraceVar:
+        def get(self):
+            return TraceObservation(BrokenObservation())
+
+    monkeypatch.setattr(langfuse_tracing, "_current_trace", DummyTraceVar())
+
+    update_trace_fields(selected_workflow="transfer_workflow")
 
 
 def test_trace_observation_end_updates_before_v4_end():

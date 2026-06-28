@@ -5,7 +5,7 @@ from ai.llm.errors import LLMResponseError, UnknownOperationError
 from ai.llm.prompt_loader import PROJECT_ROOT, load_prompt, load_response_prompt
 from ai.llm.provider_clients import invoke_provider_chat_completion
 from ai.shared.json_safe import make_json_safe
-from observability.langfuse_tracing import record_event, start_span
+from observability.langfuse_tracing import record_event, safe_metadata, start_span
 
 
 CONFIG_PATH = PROJECT_ROOT / "config" / "llm_routing.json"
@@ -62,6 +62,9 @@ def _build_payload(
     persona: dict | None = None,
 ) -> dict:
     response_format = None if text else settings.get("response_format")
+    response_format_type = None
+    if isinstance(response_format, dict):
+        response_format_type = response_format.get("type")
     metadata = {
         "operation": settings["operation"],
         "provider": settings.get("provider"),
@@ -72,6 +75,7 @@ def _build_payload(
         "cost_tier": settings.get("cost_tier"),
         "prompt_source": prompt_source,
         "prompt_override_used": prompt_override_used,
+        "response_format_type": response_format_type,
     }
     if persona:
         metadata.update(
@@ -152,7 +156,7 @@ async def _invoke(operation: str, variables: dict, *, create_chat_completion=Non
             "prompt_override_used": prompt_override_used,
             "persona": (persona or {}).get("resolvedPersona") if isinstance(persona, dict) else None,
         },
-        metadata=payload.get("metadata"),
+        metadata=safe_metadata(payload.get("metadata")),
     )
     success = False
     try:
@@ -179,7 +183,7 @@ async def _invoke(operation: str, variables: dict, *, create_chat_completion=Non
             "duration_ms": duration_ms,
         }
         span.end(output={"operation": settings["operation"], "success": success, "duration_ms": duration_ms}, metadata=metadata)
-        record_event(name="llm_operation_completed", metadata=metadata)
+        record_event(name="llm_operation_completed", metadata=safe_metadata(metadata))
 
 
 async def invoke_llm_json(operation: str, variables: dict, *, create_chat_completion=None, abort_signal=None) -> dict:

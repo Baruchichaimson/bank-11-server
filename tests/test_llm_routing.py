@@ -79,6 +79,11 @@ async def test_invoke_llm_json_uses_injected_chat_completion_and_parses_json():
     assert calls[0]["model"] == "gpt-4o-mini"
     assert calls[0]["response_format"] == {"type": "json_object"}
     assert calls[0]["prompt_file"] == "prompts/risk_analysis.md"
+    assert calls[0]["metadata"]["operation"] == "risk_analysis"
+    assert calls[0]["metadata"]["prompt_source"] == "local"
+    assert calls[0]["metadata"]["prompt_override_used"] is False
+    assert calls[0]["metadata"]["response_format_type"] == "json_object"
+    assert calls[0]["metadata"]["cost_tier"] == "low"
     assert calls[0]["messages"][0]["role"] == "system"
     assert json.loads(calls[0]["messages"][-1]["content"])["amount"] == 100
 
@@ -114,6 +119,9 @@ async def test_invoke_llm_json_user_intent_routes_through_configured_prompt():
     assert result["intent"] == "check_balance"
     assert calls[0]["operation"] == "user_intent"
     assert calls[0]["prompt_file"] == "prompts/user_intent.md"
+    assert calls[0]["metadata"]["prompt_source"] == "local"
+    assert calls[0]["metadata"]["prompt_override_used"] is False
+    assert calls[0]["metadata"]["response_format_type"] == "json_object"
     assert calls[0]["messages"][0]["content"].startswith("You are a banking intent router")
 
 

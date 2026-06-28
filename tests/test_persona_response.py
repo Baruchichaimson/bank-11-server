@@ -37,6 +37,7 @@ async def test_invoke_llm_text_passes_persona_selected_prompt_to_chat_completion
     assert calls[0]["prompt_file"] == "prompts/response/formal.md"
     assert calls[0]["messages"][0]["content"].startswith("You are a professional banking assistant.")
     assert calls[0]["metadata"]["persona"] == "formal"
+    assert calls[0]["metadata"]["prompt_source"] == "local"
     assert calls[0]["metadata"]["prompt_override_used"] is False
 
 

@@ -78,6 +78,8 @@ async def test_risk_judge_accepts_valid_mocked_llm_json():
     assert result["riskJudge"]["reason"] == "Risk analysis is consistent."
     assert result["riskJudge"]["model"] == "judge-model"
     assert result["riskJudge"]["provider"] == "test-provider"
+    assert result["audit"]["aiDecisions"][-1]["status"] == "evaluated"
+    assert result["audit"]["aiDecisions"][-1]["reasonPreview"]["preview"] == "Risk analysis is consistent."
 
 
 @pytest.mark.asyncio
@@ -89,6 +91,7 @@ async def test_malformed_risk_judge_output_denies_safely():
 
     assert result["riskJudge"]["approval"] == "DENIED"
     assert "invalid" in result["riskJudge"]["reason"].lower()
+    assert result["audit"]["aiDecisions"][-1]["status"] == "failed"
 
 
 @pytest.mark.asyncio
@@ -103,6 +106,7 @@ async def test_incomplete_transfer_data_skips_judge_without_denial():
     assert result["riskJudge"]["status"] == "not_evaluated"
     assert result["riskJudge"]["approval"] is None
     assert "incomplete" in result["riskJudge"]["reason"].lower()
+    assert result["audit"]["aiDecisions"][-1]["status"] == "not_evaluated"
 
 
 @pytest.mark.asyncio

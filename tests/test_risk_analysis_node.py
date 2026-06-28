@@ -124,6 +124,8 @@ async def test_valid_mocked_llm_json_stores_risk_level(level):
     assert result["riskAnalysis"]["reason"] == "Mocked risk analysis"
     assert result["riskAnalysis"]["model"] == "risk-model"
     assert result["riskAnalysis"]["provider"] == "test-provider"
+    assert result["audit"]["aiDecisions"][-1]["status"] == "evaluated"
+    assert result["audit"]["aiDecisions"][-1]["reasonPreview"]["preview"] == "Mocked risk analysis"
 
 
 @pytest.mark.asyncio
@@ -157,6 +159,8 @@ async def test_deterministic_risk_output_is_preserved_in_state():
         "amount": 100.0,
         "senderBalance": 1000.0,
     }
+    assert result["audit"]["aiDecisions"][-1]["status"] == "evaluated"
+    assert result["audit"]["aiDecisions"][-1]["reasonCount"] == 1
 
 
 @pytest.mark.asyncio
@@ -175,3 +179,4 @@ async def test_risk_nodes_do_not_crash_when_transfer_fields_are_incomplete():
     assert deterministic["deterministicRisk"]["status"] == "not_evaluated"
     assert analyzed["riskAnalysis"]["level"] == "HIGH"
     assert "incomplete" in analyzed["riskAnalysis"]["reason"].lower()
+    assert analyzed["audit"]["aiDecisions"][-1]["status"] == "not_evaluated"

@@ -21,6 +21,7 @@ from config.settings import BANKING_GRAPH_DEBUG
 from observability.langfuse_tracing import (
     get_request_id,
     get_trace_fields,
+    safe_metadata,
     record_event,
     start_span,
     text_preview,
@@ -317,13 +318,14 @@ async def deterministic_risk_node(state: dict, config: RunnableConfig | None = N
             }
 
     summary = {
+        "status": result.get("status") or ("evaluated" if _deterministic_risk_was_evaluated(result) else "not_evaluated"),
         "level": result.get("level"),
         "score": result.get("score"),
         "requiresReview": result.get("requiresReview"),
         "reasonCount": len(result.get("reasons") or []),
     }
-    span.end(output=summary, metadata=summary)
-    record_event(name="deterministic_risk_evaluated", metadata=summary)
+    span.end(output=summary, metadata=safe_metadata(summary))
+    record_event(name="deterministic_risk_evaluated", metadata=safe_metadata(summary))
 
     return make_json_safe({
         **state,
@@ -365,6 +367,7 @@ async def risk_analysis_node(state: dict, config: RunnableConfig | None = None) 
     )
 
     parsed = {}
+    status = "unavailable"
     if create_chat_completion and _risk_payload_complete(payload):
         try:
             parsed = await invoke_llm_json(
@@ -373,23 +376,27 @@ async def risk_analysis_node(state: dict, config: RunnableConfig | None = None) 
                 create_chat_completion=create_chat_completion,
                 abort_signal=configurable.get("abortSignal"),
             )
+            status = "evaluated"
         except Exception as err:
+            status = "failed"
             parsed = {"reason": f"Risk analysis LLM output unavailable or invalid: {err}"}
     elif not _risk_payload_complete(payload):
+        status = "not_evaluated"
         parsed = {"reason": "Transfer details incomplete; risk analysis unavailable."}
     else:
         parsed = {"reason": "Risk analysis LLM unavailable."}
 
     normalized = normalize_risk_analysis(parsed)
     summary = {
+        "status": status,
         "operation": "risk_analysis",
         "provider": normalized.get("provider"),
         "model": normalized.get("model"),
         "level": normalized.get("level"),
         "reasonPreview": text_preview(normalized.get("reason", ""), max_chars=120),
     }
-    span.end(output=summary, metadata=summary)
-    record_event(name="risk_analysis_completed", metadata=summary)
+    span.end(output=summary, metadata=safe_metadata(summary))
+    record_event(name="risk_analysis_completed", metadata=safe_metadata(summary))
 
     return make_json_safe({
         **state,
@@ -432,6 +439,7 @@ async def risk_judge_node(state: dict, config: RunnableConfig | None = None) -> 
         }
         summary = {
             "operation": "risk_judge",
+            "status": skipped.get("status"),
             "approval": skipped.get("approval"),
             "reasonPreview": text_preview(skipped.get("reason", ""), max_chars=120),
             "provider": None,
@@ -439,8 +447,8 @@ async def risk_judge_node(state: dict, config: RunnableConfig | None = None) -> 
             "success": True,
             "duration_ms": (time.perf_counter() - start) * 1000,
         }
-        span.end(output=summary, metadata=summary)
-        record_event(name="risk_judge_completed", metadata=summary)
+        span.end(output=summary, metadata=safe_metadata(summary))
+        record_event(name="risk_judge_completed", metadata=safe_metadata(summary))
         return make_json_safe({
             **state,
             "riskJudge": skipped,
@@ -467,6 +475,7 @@ async def risk_judge_node(state: dict, config: RunnableConfig | None = None) -> 
 
     parsed = {}
     success = True
+    status = "evaluated"
     if create_chat_completion:
         try:
             parsed = await invoke_llm_json(
@@ -477,14 +486,17 @@ async def risk_judge_node(state: dict, config: RunnableConfig | None = None) -> 
             )
         except Exception as err:
             success = False
+            status = "failed"
             parsed = {"reason": f"Risk judge LLM output unavailable or invalid: {err}"}
     else:
         success = False
+        status = "unavailable"
         parsed = {"reason": "Risk judge LLM unavailable."}
 
     normalized = normalize_risk_judge(parsed)
     summary = {
         "operation": "risk_judge",
+        "status": status,
         "approval": normalized.get("approval"),
         "reasonPreview": text_preview(normalized.get("reason", ""), max_chars=120),
         "provider": normalized.get("provider"),
@@ -492,8 +504,8 @@ async def risk_judge_node(state: dict, config: RunnableConfig | None = None) -> 
         "success": success,
         "duration_ms": (time.perf_counter() - start) * 1000,
     }
-    span.end(output=summary, metadata=summary)
-    record_event(name="risk_judge_completed", metadata=summary)
+    span.end(output=summary, metadata=safe_metadata(summary))
+    record_event(name="risk_judge_completed", metadata=safe_metadata(summary))
 
     return make_json_safe({
         **state,
@@ -534,15 +546,16 @@ async def risk_decision_node(state: dict, config: RunnableConfig | None = None) 
 
     summary = {
         "allowed": decision.get("allowed"),
+        "status": decision.get("status") or ("evaluated" if applicable else "not_evaluated"),
         "reasonPreview": text_preview(decision.get("reason", ""), max_chars=120),
         "riskAnalysisLevel": risk_analysis.get("level"),
         "riskJudgeApproval": risk_judge.get("approval"),
         "deterministicRiskLevel": deterministic_risk.get("level"),
         "deterministicRiskRequiresReview": deterministic_risk.get("requiresReview"),
     }
-    span = start_span(name="risk_decision_node", input=summary, metadata=summary)
-    span.end(output=summary, metadata=summary)
-    record_event(name="risk_decision_created", metadata=summary)
+    span = start_span(name="risk_decision_node", input=summary, metadata=safe_metadata(summary))
+    span.end(output=summary, metadata=safe_metadata(summary))
+    record_event(name="risk_decision_created", metadata=safe_metadata(summary))
 
     return make_json_safe({
         **state,
@@ -565,7 +578,11 @@ async def blocked_transfer_response_node(state: dict) -> dict:
     )
     record_event(
         name="transfer_blocked_by_risk_gate",
-        metadata={"reasonPreview": text_preview(decision.get("reason", ""), max_chars=120)},
+        metadata={
+            "blocked": True,
+            "status": "blocked",
+            "reasonPreview": text_preview(decision.get("reason", ""), max_chars=120),
+        },
     )
     return make_json_safe({
         **state,
