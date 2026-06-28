@@ -13,8 +13,9 @@ import time
 from ai.graph.banking_state import BankingState, create_initial_banking_state
 from ai.graph.workflow_router import route_workflow
 from ai.intents.detect_intent import detect_intent
-from ai.contracts.assistant_response_contract import normalize_workflow_response
+from ai.contracts.assistant_response_contract import create_workflow_response, normalize_workflow_response
 from ai.contracts.risk_analysis_contract import normalize_risk_analysis
+from ai.contracts.risk_judge_contract import normalize_risk_judge
 from ai.assistant.shared import detect_language, create_reply_payload
 from ai.shared.json_safe import make_json_safe
 from config.settings import BANKING_GRAPH_DEBUG
@@ -270,6 +271,14 @@ def _risk_payload_complete(payload: dict) -> bool:
     )
 
 
+def _risk_gating_applicable_from_payload(payload: dict) -> bool:
+    return _risk_payload_complete(payload)
+
+
+def _deterministic_risk_was_evaluated(value: dict | None) -> bool:
+    return isinstance(value, dict) and value.get("status") != "not_evaluated"
+
+
 def _read_risk_analysis_prompt() -> str:
     path = Path(__file__).resolve().parents[2] / "prompts" / "risk_analysis.md"
     try:
@@ -278,6 +287,17 @@ def _read_risk_analysis_prompt() -> str:
         return (
             "You are a bank transfer risk analysis model. Return JSON only with "
             '{"level":"LOW|MEDIUM|HIGH","reason":"..."}'
+        )
+
+
+def _read_risk_judge_prompt() -> str:
+    path = Path(__file__).resolve().parents[2] / "prompts" / "risk_judge.md"
+    try:
+        return path.read_text(encoding="utf-8")
+    except Exception:
+        return (
+            "You are a bank transfer risk judge. Return JSON only with "
+            '{"approval":"ACCEPTED|DENIED","reason":"..."}'
         )
 
 
@@ -428,6 +448,191 @@ async def risk_analysis_node(state: dict, config: RunnableConfig | None = None) 
     })
 
 
+async def risk_judge_node(state: dict, config: RunnableConfig | None = None) -> dict:
+    if not _is_transfer_workflow(state):
+        return state
+
+    start = time.perf_counter()
+    configurable = (config or {}).get("configurable") or {}
+    create_chat_completion = configurable.get("createChatCompletion")
+    payload = await _enrich_risk_payload_from_services(_risk_transfer_payload(state), configurable.get("services"))
+    applicable = _risk_gating_applicable_from_payload(payload)
+    span = start_span(
+        name="risk_judge_node",
+        input={
+            "operation": "risk_judge",
+            "gatingApplicable": applicable,
+            "hasRiskAnalysis": bool(state.get("riskAnalysis")),
+            "hasDeterministicRisk": bool(state.get("deterministicRisk")),
+        },
+        metadata={"operation": "risk_judge"},
+    )
+
+    if not applicable:
+        skipped = {
+            "status": "not_evaluated",
+            "approval": None,
+            "reason": "Transfer details incomplete; risk judge not evaluated.",
+            "model": None,
+            "provider": None,
+            "raw": {},
+        }
+        summary = {
+            "operation": "risk_judge",
+            "approval": skipped.get("approval"),
+            "reasonPreview": text_preview(skipped.get("reason", ""), max_chars=120),
+            "provider": None,
+            "model": None,
+            "success": True,
+            "duration_ms": (time.perf_counter() - start) * 1000,
+        }
+        span.end(output=summary, metadata=summary)
+        record_event(name="risk_judge_completed", metadata=summary)
+        return make_json_safe({
+            **state,
+            "riskJudge": skipped,
+            "audit": {
+                **(state.get("audit") or {}),
+                "aiDecisions": [*((state.get("audit") or {}).get("aiDecisions") or []), {"node": "risk_judge_node", **summary}],
+            },
+        })
+
+    llm_payload = {
+        "operation": "risk_judge",
+        "riskInput": {
+            "userId": payload.get("userId"),
+            "userEmail": payload.get("userEmail"),
+            "senderEmail": payload.get("senderEmail"),
+            "receiverEmail": payload.get("receiverEmail"),
+            "amount": payload.get("amount"),
+            "senderBalance": payload.get("senderBalance"),
+            "historySummary": _history_summary(state.get("history") or []),
+        },
+        "deterministicRisk": state.get("deterministicRisk"),
+        "riskAnalysis": state.get("riskAnalysis"),
+    }
+
+    parsed = {}
+    success = True
+    if create_chat_completion:
+        try:
+            response = await create_chat_completion({
+                "temperature": 0,
+                "response_format": {"type": "json_object"},
+                "operation": "risk_judge",
+                "messages": [
+                    {"role": "system", "content": _read_risk_judge_prompt()},
+                    {"role": "user", "content": json.dumps(make_json_safe(llm_payload), ensure_ascii=False)},
+                ],
+            })
+            content = _extract_llm_content(response)
+            parsed = json.loads(str(content or "").strip())
+            if not isinstance(parsed, dict):
+                parsed = {}
+            if getattr(response, "model", None) and not parsed.get("model"):
+                parsed["model"] = getattr(response, "model")
+            if getattr(response, "provider", None) and not parsed.get("provider"):
+                parsed["provider"] = getattr(response, "provider")
+        except Exception as err:
+            success = False
+            parsed = {"reason": f"Risk judge LLM output unavailable or invalid: {err}"}
+    else:
+        success = False
+        parsed = {"reason": "Risk judge LLM unavailable."}
+
+    normalized = normalize_risk_judge(parsed)
+    summary = {
+        "operation": "risk_judge",
+        "approval": normalized.get("approval"),
+        "reasonPreview": text_preview(normalized.get("reason", ""), max_chars=120),
+        "provider": normalized.get("provider"),
+        "model": normalized.get("model"),
+        "success": success,
+        "duration_ms": (time.perf_counter() - start) * 1000,
+    }
+    span.end(output=summary, metadata=summary)
+    record_event(name="risk_judge_completed", metadata=summary)
+
+    return make_json_safe({
+        **state,
+        "riskJudge": normalized,
+        "audit": {
+            **(state.get("audit") or {}),
+            "aiDecisions": [*((state.get("audit") or {}).get("aiDecisions") or []), {"node": "risk_judge_node", **summary}],
+        },
+    })
+
+
+async def risk_decision_node(state: dict, config: RunnableConfig | None = None) -> dict:
+    if not _is_transfer_workflow(state):
+        return state
+
+    payload = await _enrich_risk_payload_from_services(_risk_transfer_payload(state), _get_services(config))
+    risk_analysis = state.get("riskAnalysis") or {}
+    deterministic_risk = state.get("deterministicRisk") or {}
+    risk_judge = state.get("riskJudge") or {}
+    applicable = _risk_gating_applicable_from_payload(payload)
+
+    if not applicable:
+        decision = {
+            "allowed": True,
+            "status": "not_evaluated",
+            "reason": "Transfer details incomplete; risk gate not evaluated yet.",
+        }
+    elif risk_analysis.get("level") == "HIGH":
+        decision = {"allowed": False, "reason": "Transfer requires additional review."}
+    elif risk_judge.get("approval") != "ACCEPTED":
+        decision = {"allowed": False, "reason": "Transfer requires additional review."}
+    elif _deterministic_risk_was_evaluated(deterministic_risk) and deterministic_risk.get("level") == "HIGH":
+        decision = {"allowed": False, "reason": "Transfer requires additional review."}
+    elif _deterministic_risk_was_evaluated(deterministic_risk) and deterministic_risk.get("requiresReview") is True:
+        decision = {"allowed": False, "reason": "Transfer requires additional review."}
+    else:
+        decision = {"allowed": True, "reason": "Risk checks passed."}
+
+    summary = {
+        "allowed": decision.get("allowed"),
+        "reasonPreview": text_preview(decision.get("reason", ""), max_chars=120),
+        "riskAnalysisLevel": risk_analysis.get("level"),
+        "riskJudgeApproval": risk_judge.get("approval"),
+        "deterministicRiskLevel": deterministic_risk.get("level"),
+        "deterministicRiskRequiresReview": deterministic_risk.get("requiresReview"),
+    }
+    span = start_span(name="risk_decision_node", input=summary, metadata=summary)
+    span.end(output=summary, metadata=summary)
+    record_event(name="risk_decision_created", metadata=summary)
+
+    return make_json_safe({
+        **state,
+        "riskDecision": decision,
+        "audit": {
+            **(state.get("audit") or {}),
+            "aiDecisions": [*((state.get("audit") or {}).get("aiDecisions") or []), {"node": "risk_decision_node", **summary}],
+        },
+    })
+
+
+async def blocked_transfer_response_node(state: dict) -> dict:
+    decision = state.get("riskDecision") or {}
+    message = "This transfer cannot be completed right now because it requires additional review."
+    workflow_response = create_workflow_response(
+        message=message,
+        action=None,
+        next_conversation_state=None,
+        execution={"executed": False, "operation": "transfer_money", "result": None},
+    )
+    record_event(
+        name="transfer_blocked_by_risk_gate",
+        metadata={"reasonPreview": text_preview(decision.get("reason", ""), max_chars=120)},
+    )
+    return make_json_safe({
+        **state,
+        "workflow": {**(state.get("workflow") or {}), "currentPhase": "Risk Blocked"},
+        "workflowResponse": workflow_response,
+        "execution": workflow_response["execution"],
+    })
+
+
 async def _run_workflow_with_trace(*, workflow_name: str, func, state: dict, config: RunnableConfig | None = None, services=None):
     start = time.perf_counter()
     span = start_span(
@@ -515,6 +720,11 @@ async def _route_to_workflow(state: dict) -> str:
     return (state.get("workflow") or {}).get("activeWorkflow", "unknown_workflow")
 
 
+async def _route_after_risk_decision(state: dict) -> str:
+    decision = state.get("riskDecision") or {}
+    return "transfer_workflow" if decision.get("allowed") is not False else "blocked_transfer_response_node"
+
+
 def create_banking_graph():
     graph = StateGraph(BankingState)
     graph.add_node("user_request", user_request_node)
@@ -522,6 +732,9 @@ def create_banking_graph():
     graph.add_node("workflow_router", workflow_router_node)
     graph.add_node("deterministic_risk_node", deterministic_risk_node)
     graph.add_node("risk_analysis_node", risk_analysis_node)
+    graph.add_node("risk_judge_node", risk_judge_node)
+    graph.add_node("risk_decision_node", risk_decision_node)
+    graph.add_node("blocked_transfer_response_node", blocked_transfer_response_node)
     graph.add_node("transfer_workflow", run_transfer_workflow_node)
     graph.add_node("transactions_workflow", run_transactions_workflow_node)
     graph.add_node("balance_workflow", run_balance_workflow_node)
@@ -542,7 +755,13 @@ def create_banking_graph():
         "unknown_workflow": "unknown_workflow",
     })
     graph.add_edge("deterministic_risk_node", "risk_analysis_node")
-    graph.add_edge("risk_analysis_node", "transfer_workflow")
+    graph.add_edge("risk_analysis_node", "risk_judge_node")
+    graph.add_edge("risk_judge_node", "risk_decision_node")
+    graph.add_conditional_edges("risk_decision_node", _route_after_risk_decision, {
+        "transfer_workflow": "transfer_workflow",
+        "blocked_transfer_response_node": "blocked_transfer_response_node",
+    })
+    graph.add_edge("blocked_transfer_response_node", "return_response")
     graph.add_edge("transfer_workflow", "return_response")
     graph.add_edge("transactions_workflow", "return_response")
     graph.add_edge("balance_workflow", "return_response")
