@@ -47,6 +47,15 @@
       },
       "prompt_file": "prompts/risk_judge.md",
       "cost_tier": "medium"
+    },
+    "assistant_response": {
+      "provider": "openai",
+      "model": "gpt-4o-mini",
+      "temperature": 0.4,
+      "top_p": 1,
+      "max_tokens": 500,
+      "prompt_file": "prompts/response/default.md",
+      "cost_tier": "low"
     }
   },
   "supported_providers": [
