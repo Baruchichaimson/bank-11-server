@@ -10,7 +10,7 @@ from config.settings import (
 from observability.langfuse_tracing import get_langfuse_openai_kwargs
 
 
-INTERNAL_PROVIDER_PAYLOAD_FIELDS = {
+_INTERNAL_PROVIDER_PAYLOAD_KEYS = {
     "operation",
     "provider",
     "prompt_file",
@@ -23,14 +23,25 @@ INTERNAL_PROVIDER_PAYLOAD_FIELDS = {
 
 def _provider_credentials(provider: str) -> dict:
     provider = str(provider or "").lower()
+
     if provider == "openai":
         return {"api_key": OPENAI_API_KEY, "base_url": OPENAI_BASE_URL}
+
     if provider == "groq":
-        return {"api_key": GROQ_API_KEY, "base_url": GROQ_BASE_URL or "https://api.groq.com/openai/v1"}
+        return {
+            "api_key": GROQ_API_KEY,
+            "base_url": GROQ_BASE_URL or "https://api.groq.com/openai/v1",
+        }
+
     if provider == "ollama":
-        return {"api_key": OLLAMA_API_KEY or "ollama", "base_url": OLLAMA_BASE_URL or "http://localhost:11434/v1"}
+        return {
+            "api_key": OLLAMA_API_KEY or "ollama",
+            "base_url": OLLAMA_BASE_URL or "http://localhost:11434/v1",
+        }
+
     if provider == "gemini":
         raise ProviderNotConfiguredError("Provider 'gemini' is not configured in this runtime")
+
     raise ProviderNotConfiguredError(f"Unsupported LLM provider: {provider}")
 
 
@@ -57,14 +68,17 @@ async def invoke_provider_chat_completion(payload: dict):
     kwargs = {
         key: value
         for key, value in payload.items()
-        if key not in INTERNAL_PROVIDER_PAYLOAD_FIELDS
+        if key not in _INTERNAL_PROVIDER_PAYLOAD_KEYS
         and value is not None
     }
+
     if is_langfuse_client:
-        kwargs.update(get_langfuse_openai_kwargs(
-            name=payload.get("langfuse_name") or f"llm.{payload.get('operation') or 'chat'}",
-            metadata=payload.get("metadata") or {},
-        ))
+        kwargs.update(
+            get_langfuse_openai_kwargs(
+                name=payload.get("langfuse_name") or f"llm.{payload.get('operation') or 'chat'}",
+                metadata=payload.get("metadata") or {},
+            )
+        )
 
     client = AsyncOpenAI(**client_kwargs)
     return await client.chat.completions.create(**kwargs)

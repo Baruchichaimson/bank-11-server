@@ -27,18 +27,27 @@ INTERNAL_CHAT_COMPLETION_FIELDS = {
 async def _create_chat_completion(payload: dict):
     """Async wrapper around the OpenAI (compatible) chat completion call."""
     metadata = dict(payload.get("metadata") or {})
-    kwargs = {k: v for k, v in payload.items() if k not in INTERNAL_CHAT_COMPLETION_FIELDS}
+    kwargs = {
+        k: v
+        for k, v in payload.items()
+        if k not in INTERNAL_CHAT_COMPLETION_FIELDS and v is not None
+    }
+
     if "model" not in kwargs:
         kwargs["model"] = OPENAI_MODEL
+
     if IS_LANGFUSE_OPENAI_CLIENT:
-        kwargs.update(get_langfuse_openai_kwargs(
-            name=payload.get("langfuse_name") or "chat_completion",
-            metadata={
-                "provider": "openai-compatible",
-                "response_format": kwargs.get("response_format"),
-                **metadata,
-            },
-        ))
+        kwargs.update(
+            get_langfuse_openai_kwargs(
+                name=payload.get("langfuse_name") or "chat_completion",
+                metadata={
+                    "provider": "openai-compatible",
+                    "response_format": kwargs.get("response_format"),
+                    **metadata,
+                },
+            )
+        )
+
     return await openai_client.chat.completions.create(**kwargs)
 
 
