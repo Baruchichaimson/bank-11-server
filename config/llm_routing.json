@@ -1,8 +1,8 @@
 {
   "operations": {
     "user_intent": {
-      "provider": "openai",
-      "model": "gpt-4o-mini",
+      "provider": "groq",
+      "model": "llama-3.1-8b-instant",
       "temperature": 0,
       "top_p": 1,
       "max_tokens": 500,
@@ -13,8 +13,8 @@
       "cost_tier": "low"
     },
     "transfer_field_extraction": {
-      "provider": "openai",
-      "model": "gpt-4o-mini",
+      "provider": "groq",
+      "model": "llama-3.1-8b-instant",
       "temperature": 0,
       "top_p": 1,
       "max_tokens": 700,
@@ -25,8 +25,8 @@
       "cost_tier": "low"
     },
     "risk_analysis": {
-      "provider": "openai",
-      "model": "gpt-4o-mini",
+      "provider": "groq",
+      "model": "llama-3.1-8b-instant",
       "temperature": 0,
       "top_p": 1,
       "max_tokens": 900,
@@ -37,8 +37,8 @@
       "cost_tier": "low"
     },
     "risk_judge": {
-      "provider": "openai",
-      "model": "gpt-4o",
+      "provider": "groq",
+      "model": "llama-3.1-8b-instant",
       "temperature": 0,
       "top_p": 1,
       "max_tokens": 700,
@@ -49,8 +49,8 @@
       "cost_tier": "medium"
     },
     "assistant_response": {
-      "provider": "openai",
-      "model": "gpt-4o-mini",
+      "provider": "groq",
+      "model": "llama-3.1-8b-instant",
       "temperature": 0.4,
       "top_p": 1,
       "max_tokens": 500,
