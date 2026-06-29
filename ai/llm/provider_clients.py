@@ -10,6 +10,17 @@ from config.settings import (
 from observability.langfuse_tracing import get_langfuse_openai_kwargs
 
 
+INTERNAL_PROVIDER_PAYLOAD_FIELDS = {
+    "operation",
+    "provider",
+    "prompt_file",
+    "cost_tier",
+    "metadata",
+    "abortSignal",
+    "langfuse_name",
+}
+
+
 def _provider_credentials(provider: str) -> dict:
     provider = str(provider or "").lower()
     if provider == "openai":
@@ -46,7 +57,7 @@ async def invoke_provider_chat_completion(payload: dict):
     kwargs = {
         key: value
         for key, value in payload.items()
-        if key not in {"provider", "prompt_file", "cost_tier", "metadata", "abortSignal"}
+        if key not in INTERNAL_PROVIDER_PAYLOAD_FIELDS
         and value is not None
     }
     if is_langfuse_client:

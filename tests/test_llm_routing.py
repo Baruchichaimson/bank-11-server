@@ -1,11 +1,14 @@
 import json
+import sys
 from types import SimpleNamespace
 
 import pytest
 
+from ai.assistant import chat_assistant
 from ai.llm.errors import LLMResponseError, PromptLoadError, UnknownOperationError
 from ai.llm.llm_router import invoke_llm_json, load_llm_routing_config, resolve_operation_config
 from ai.llm.prompt_loader import load_prompt
+from ai.llm import provider_clients
 
 
 def _completion_response(content):
@@ -136,3 +139,95 @@ async def test_invoke_llm_json_malformed_response_raises_clear_error():
             {"operation": "risk_analysis"},
             create_chat_completion=fake_chat_completion,
         )
+
+
+@pytest.mark.asyncio
+async def test_create_chat_completion_filters_internal_fields_before_sdk_call(monkeypatch):
+    captured = {}
+
+    class FakeCompletions:
+        async def create(self, **kwargs):
+            captured.update(kwargs)
+            return _completion_response(json.dumps({"ok": True}))
+
+    fake_client = SimpleNamespace(
+        chat=SimpleNamespace(completions=FakeCompletions())
+    )
+
+    monkeypatch.setattr(chat_assistant, "openai_client", fake_client)
+    monkeypatch.setattr(chat_assistant, "OPENAI_MODEL", "fallback-model")
+    monkeypatch.setattr(chat_assistant, "IS_LANGFUSE_OPENAI_CLIENT", False)
+
+    await chat_assistant._create_chat_completion({
+        "operation": "user_intent",
+        "provider": "openai",
+        "model": "gpt-4o-mini",
+        "prompt_file": "prompts/user_intent.md",
+        "cost_tier": "low",
+        "langfuse_name": "llm.user_intent",
+        "metadata": {"operation": "user_intent"},
+        "abortSignal": object(),
+        "messages": [{"role": "user", "content": "hello"}],
+        "temperature": 0,
+    })
+
+    assert captured["model"] == "gpt-4o-mini"
+    assert captured["messages"] == [{"role": "user", "content": "hello"}]
+    assert captured["temperature"] == 0
+    for field in (
+        "operation",
+        "provider",
+        "prompt_file",
+        "cost_tier",
+        "langfuse_name",
+        "metadata",
+        "abortSignal",
+    ):
+        assert field not in captured
+
+
+@pytest.mark.asyncio
+async def test_invoke_provider_chat_completion_filters_operation_and_langfuse_name_before_sdk_call(monkeypatch):
+    captured = {}
+
+    class FakeCompletions:
+        async def create(self, **kwargs):
+            captured.update(kwargs)
+            return _completion_response(json.dumps({"ok": True}))
+
+    class FakeAsyncOpenAI:
+        def __init__(self, **kwargs):
+            self.client_kwargs = kwargs
+            self.chat = SimpleNamespace(completions=FakeCompletions())
+
+    fake_langfuse_openai = SimpleNamespace(AsyncOpenAI=FakeAsyncOpenAI)
+    monkeypatch.setitem(sys.modules, "langfuse.openai", fake_langfuse_openai)
+    monkeypatch.setattr(provider_clients, "_provider_credentials", lambda _provider: {"api_key": "test-key", "base_url": None})
+    monkeypatch.setattr(provider_clients, "get_langfuse_openai_kwargs", lambda **_kwargs: {})
+
+    await provider_clients.invoke_provider_chat_completion({
+        "operation": "risk_analysis",
+        "provider": "openai",
+        "model": "gpt-4o-mini",
+        "prompt_file": "prompts/risk_analysis.md",
+        "cost_tier": "low",
+        "langfuse_name": "llm.risk_analysis",
+        "metadata": {"operation": "risk_analysis"},
+        "abortSignal": object(),
+        "messages": [{"role": "user", "content": "hello"}],
+        "temperature": 0,
+    })
+
+    assert captured["model"] == "gpt-4o-mini"
+    assert captured["messages"] == [{"role": "user", "content": "hello"}]
+    assert captured["temperature"] == 0
+    for field in (
+        "operation",
+        "provider",
+        "prompt_file",
+        "cost_tier",
+        "langfuse_name",
+        "metadata",
+        "abortSignal",
+    ):
+        assert field not in captured

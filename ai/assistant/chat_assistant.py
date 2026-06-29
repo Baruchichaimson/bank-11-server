@@ -13,10 +13,21 @@ from ai.assistant.shared import MAX_HISTORY, detect_language, create_reply_paylo
 from observability.langfuse_tracing import record_event, get_langfuse_openai_kwargs
 
 
+INTERNAL_CHAT_COMPLETION_FIELDS = {
+    "operation",
+    "provider",
+    "prompt_file",
+    "cost_tier",
+    "metadata",
+    "abortSignal",
+    "langfuse_name",
+}
+
+
 async def _create_chat_completion(payload: dict):
     """Async wrapper around the OpenAI (compatible) chat completion call."""
     metadata = dict(payload.get("metadata") or {})
-    kwargs = {k: v for k, v in payload.items() if k not in ("abortSignal", "metadata", "langfuse_name")}
+    kwargs = {k: v for k, v in payload.items() if k not in INTERNAL_CHAT_COMPLETION_FIELDS}
     if "model" not in kwargs:
         kwargs["model"] = OPENAI_MODEL
     if IS_LANGFUSE_OPENAI_CLIENT:
