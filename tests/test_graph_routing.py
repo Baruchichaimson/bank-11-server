@@ -20,6 +20,10 @@ def _completion_response(payload: dict):
 def _fake_llm(payload_by_message: dict):
     async def create_chat_completion(payload):
         user_payload = json.loads(payload["messages"][-1]["content"])
+        if payload.get("operation") == "risk_analysis":
+            return _completion_response({"level": "LOW", "reason": "Mocked low risk."})
+        if payload.get("operation") == "risk_judge":
+            return _completion_response({"approval": "ACCEPTED", "reason": "Mocked accepted risk."})
         current = user_payload["currentUserMessage"]
         return _completion_response(payload_by_message[current])
 
@@ -218,6 +222,7 @@ async def test_inline_transfer_form_executes_small_amount_without_confirmation()
             "amount": 100,
             "description": "rent",
         },
+        create_chat_completion=_fake_llm({}),
         services=services,
         thread_id=thread_id,
     )
@@ -262,6 +267,7 @@ async def test_inline_transfer_form_requires_confirmation_only_for_high_amount()
             "amount": 1500,
             "description": "rent",
         },
+        create_chat_completion=_fake_llm({}),
         services=services,
         thread_id=thread_id,
     )
@@ -276,6 +282,7 @@ async def test_inline_transfer_form_requires_confirmation_only_for_high_amount()
         user_email="dana@example.com",
         history=confirmation["nextHistory"],
         transfer_payload={"confirmation": "yes"},
+        create_chat_completion=_fake_llm({}),
         services=services,
         thread_id=thread_id,
     )

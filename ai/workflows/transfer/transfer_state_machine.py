@@ -68,6 +68,10 @@ class TransferState(TypedDict, total=False):
     riskAssessment: Any
     transactionResult: Any
     suggestions: Any
+    deterministicRisk: Any
+    riskAnalysis: Any
+    riskJudge: Any
+    riskDecision: Any
 
 
 # ---------------------------------------------------------------------------
@@ -544,29 +548,7 @@ async def run_transfer_node(state: dict, config: RunnableConfig | None = None) -
             f"ההעברה נכשלה: {err}" if flow_language == "he" else f"Transfer failed: {err}"
         )
 
-    # ── 4. Risk check ──────────────────────────────────────────────────────
-
-    risk_service = (services or {}).get("riskService")
-    risk_assessment = {"requiresReview": False}
-    if risk_service:
-        try:
-            risk_assessment = risk_service.evaluateRisk({
-                "senderEmail": str(sender_user.get("email") or "").lower(),
-                "receiverEmail": str(receiver_user.get("email") or "").lower(),
-                "amount": float(amount),
-                "senderBalance": sender_account.get("balance"),
-            })
-        except Exception:
-            pass
-
-    if risk_assessment.get("requiresReview"):
-        reasons = ", ".join(risk_assessment.get("reasons") or []) or "Policy checks"
-        return _error(
-            f"ההעברה סומנה בסיכון גבוה ונשלחה לבדיקה ידנית. סיבה: {reasons}." if flow_language == "he"
-            else f"This transfer was flagged as high risk and sent to manual review. Reason: {reasons}."
-        )
-
-    # ── 5. High-amount confirmation ────────────────────────────────────────
+    # ── 4. High-amount confirmation ────────────────────────────────────────
 
     if float(amount) > EXTRA_CONFIRMATION_THRESHOLD:
         resume = interrupt({
@@ -580,6 +562,56 @@ async def run_transfer_node(state: dict, config: RunnableConfig | None = None) -
         )
         if confirm_sem.get("confirmation") != "yes":
             return _cancel()
+
+    # ── 5. Execution-time risk gate ────────────────────────────────────────
+
+    from ai.services.transfer_risk_gate import evaluate_transfer_execution_risk
+
+    risk_result = await evaluate_transfer_execution_risk(
+        sender_user=sender_user,
+        receiver_user=receiver_user,
+        sender_account=sender_account,
+        receiver_account=receiver_account,
+        amount=float(amount),
+        description=description or None,
+        services=services,
+        create_chat_completion=create_chat_completion,
+        abort_signal=configurable.get("abortSignal"),
+    )
+    risk_state = {
+        "deterministicRisk": risk_result.get("deterministicRisk"),
+        "riskAnalysis": risk_result.get("riskAnalysis"),
+        "riskJudge": risk_result.get("riskJudge"),
+        "riskDecision": risk_result.get("riskDecision"),
+    }
+    risk_decision = risk_result.get("riskDecision") or {}
+    if risk_decision.get("allowed") is not True:
+        msg = (
+            "לא ניתן להשלים את ההעברה כרגע. ההעברה דורשת בדיקה נוספת."
+            if flow_language == "he"
+            else "This transfer cannot be completed right now because it requires additional review."
+        )
+        record_event(
+            name="transfer_blocked_by_execution_risk_gate",
+            metadata={
+                "deterministicRiskLevel": (risk_result.get("deterministicRisk") or {}).get("level"),
+                "deterministicRiskRequiresReview": (risk_result.get("deterministicRisk") or {}).get("requiresReview"),
+                "riskAnalysisLevel": (risk_result.get("riskAnalysis") or {}).get("level"),
+                "riskJudgeApproval": (risk_result.get("riskJudge") or {}).get("approval"),
+                "riskDecisionAllowed": risk_decision.get("allowed"),
+            },
+        )
+        return _finish({
+            **state,
+            **risk_state,
+            "workflowResponse": create_workflow_response(
+                message=msg,
+                action=None,
+                next_conversation_state=None,
+                execution={"executed": False, "operation": "transfer_money", "result": None},
+            ),
+            "transfer": {**(state.get("transfer") or {}), **RESET_TRANSFER_FLOW, "nextTransferState": None},
+        }, result_status="blocked_by_risk")
 
     # ── 6. Execute ─────────────────────────────────────────────────────────
 
@@ -646,6 +678,7 @@ async def run_transfer_node(state: dict, config: RunnableConfig | None = None) -
 
     return _finish({
         **state,
+        **risk_state,
         "workflowResponse": workflow_response,
         "execution": workflow_response["execution"],
         "transfer": {**(state.get("transfer") or {}), **RESET_TRANSFER_FLOW, "nextTransferState": None},
