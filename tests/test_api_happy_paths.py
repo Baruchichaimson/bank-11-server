@@ -144,6 +144,17 @@ def test_transactions_create_happy_path_returns_completed_transaction(client, mo
     )
     monkeypatch.setattr(
         transactions_controller,
+        "run_transfer_execution_risk",
+        MagicMock(return_value={
+            "riskDecision": {
+                "allowed": True,
+                "status": "evaluated",
+                "reason": "Risk checks passed.",
+            }
+        }),
+    )
+    monkeypatch.setattr(
+        transactions_controller,
         "transfer_money",
         MagicMock(
             return_value={

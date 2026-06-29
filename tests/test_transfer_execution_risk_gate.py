@@ -246,6 +246,40 @@ async def test_transfer_node_blocks_without_execute_when_gate_denies():
 
 
 @pytest.mark.asyncio
+async def test_opening_transfer_form_does_not_invoke_risk_llm():
+    calls = []
+    services = _services(calls=calls)
+
+    async def fake_llm(payload):
+        if payload.get("operation") in {"risk_analysis", "risk_judge"}:
+            calls.append(payload["operation"])
+            raise AssertionError("risk LLM should not run when opening transfer form")
+        user_payload = json.loads(payload["messages"][-1]["content"])
+        assert user_payload["currentUserMessage"] == "תבצע לי העברה"
+        return _completion_response({
+            "domain": "transactions",
+            "intent": "transfer_money",
+            "confidence": 0.98,
+            "semanticQuery": None,
+            "toolName": "open_money_transfer_inline",
+            "transferPayload": None,
+        })
+
+    opened = await run_banking_graph(
+        user_input="תבצע לי העברה",
+        user_id="sender-1",
+        user_email="sender@example.com",
+        history=[],
+        services=services,
+        create_chat_completion=fake_llm,
+        thread_id=f"transfer-open-form-{uuid4()}",
+    )
+
+    assert opened["action"]["type"] == "open_money_transfer_inline"
+    assert calls == []
+
+
+@pytest.mark.asyncio
 async def test_interrupted_transfer_resume_runs_execution_time_risk_gate():
     thread_id = f"transfer-risk-resume-{uuid4()}"
     calls = []

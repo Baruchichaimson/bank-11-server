@@ -68,7 +68,7 @@ def _config(*, create_chat_completion=None, services=None):
     }
 
 
-def test_transfer_workflow_routes_through_risk_nodes():
+def test_transfer_workflow_routes_directly_to_transfer_workflow():
     graph = create_banking_graph().get_graph()
     edges = {(edge.source, edge.target, edge.data) for edge in graph.edges}
     conditional_edges = {
@@ -77,15 +77,11 @@ def test_transfer_workflow_routes_through_risk_nodes():
         if edge.conditional
     }
 
-    assert ("workflow_router", "deterministic_risk_node", "transfer_workflow") in edges
-    assert ("deterministic_risk_node", "risk_analysis_node", None) in edges
-    assert ("risk_analysis_node", "risk_judge_node", None) in edges
-    assert ("risk_judge_node", "risk_decision_node", None) in edges
-    assert ("risk_decision_node", "transfer_workflow") in conditional_edges
-    assert ("risk_decision_node", "blocked_transfer_response_node") in conditional_edges
-    assert ("blocked_transfer_response_node", "return_response", None) in edges
-    assert ("workflow_router", "balance_workflow", None) in edges
-    assert ("workflow_router", "transactions_workflow", None) in edges
+    assert ("workflow_router", "transfer_workflow") in conditional_edges
+    assert ("transfer_workflow", "return_response", None) in edges
+    assert ("workflow_router", "balance_workflow") in conditional_edges
+    assert ("workflow_router", "transactions_workflow") in conditional_edges
+    assert not any(source == "deterministic_risk_node" for source, _target, _data in edges)
 
 
 @pytest.mark.asyncio

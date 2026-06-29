@@ -5,7 +5,7 @@ Pytest tests for transaction endpoints.
 import jwt as pyjwt
 import os
 from datetime import datetime, timezone, timedelta
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 
 def _make_valid_token(user_id="test-user-id", email="user@example.com", token_version=0):
@@ -131,3 +131,100 @@ def test_transactions_pagination_shape(client, monkeypatch):
     else:
         # Acceptable if user or account lookup failed in mock; just verify it's a known error shape
         assert r.status_code in (401, 403, 404)
+
+
+def _mock_authenticated_transfer_setup(monkeypatch, *, user_id="test-user-id", sender_email="user@example.com"):
+    import controllers.transactions_controller as transactions_controller
+    import models.user_model as um
+    import models.account_model as am
+
+    monkeypatch.setattr(um, "find_user_by_id", lambda *a, **k: {
+        "_id": user_id, "email": sender_email, "isVerified": True, "tokenVersion": 0
+    })
+    monkeypatch.setattr(
+        transactions_controller,
+        "find_user_by_email",
+        MagicMock(return_value={"_id": "receiver-id", "email": "receiver@example.com"}),
+    )
+    monkeypatch.setattr(
+        transactions_controller,
+        "find_account_by_user_id",
+        MagicMock(
+            side_effect=[
+                {"_id": "sender-account", "userId": user_id, "status": "ACTIVE", "balance": 5000},
+                {"_id": "receiver-account", "userId": "receiver-id", "status": "ACTIVE", "balance": 100},
+            ]
+        ),
+    )
+    monkeypatch.setattr(
+        transactions_controller,
+        "assess_transfer_risk",
+        MagicMock(return_value={"requiresReview": False, "score": 10, "level": "LOW", "reasons": []}),
+    )
+    return transactions_controller
+
+
+def test_transactions_post_blocks_when_execution_risk_gate_denies(client, monkeypatch):
+    transactions_controller = _mock_authenticated_transfer_setup(monkeypatch)
+    transfer_money = MagicMock()
+    monkeypatch.setattr(transactions_controller, "transfer_money", transfer_money)
+    monkeypatch.setattr(
+        transactions_controller,
+        "run_transfer_execution_risk",
+        MagicMock(return_value={
+            "riskDecision": {
+                "allowed": False,
+                "status": "blocked",
+                "reason": "Transfer requires additional review.",
+            }
+        }),
+    )
+
+    r = _authenticated_post(client, {"receiverEmail": "receiver@example.com", "amount": 100})
+
+    assert r.status_code == 403
+    assert r.get_json()["message"] == "Transfer requires additional review."
+    transfer_money.assert_not_called()
+
+
+def test_transactions_post_calls_transfer_money_when_execution_risk_gate_allows(client, monkeypatch):
+    transactions_controller = _mock_authenticated_transfer_setup(monkeypatch)
+    transfer_money = MagicMock(return_value={
+        "_id": "tx-1",
+        "status": "COMPLETED",
+        "amount": 100,
+        "fromEmail": "user@example.com",
+        "toEmail": "receiver@example.com",
+    })
+    monkeypatch.setattr(transactions_controller, "transfer_money", transfer_money)
+    monkeypatch.setattr(
+        transactions_controller,
+        "find_account_by_id",
+        MagicMock(
+            side_effect=[
+                {"_id": "sender-account", "balance": 4900},
+                {"_id": "receiver-account", "balance": 200},
+            ]
+        ),
+    )
+    monkeypatch.setattr(
+        transactions_controller,
+        "run_transfer_execution_risk",
+        MagicMock(return_value={
+            "riskDecision": {
+                "allowed": True,
+                "status": "evaluated",
+                "reason": "Risk checks passed.",
+            }
+        }),
+    )
+
+    r = _authenticated_post(client, {"receiverEmail": "receiver@example.com", "amount": 100, "description": "Lunch"})
+
+    assert r.status_code == 201
+    transfer_money.assert_called_once_with(
+        from_account_id="sender-account",
+        to_account_id="receiver-account",
+        amount=100.0,
+        description="Lunch",
+    )

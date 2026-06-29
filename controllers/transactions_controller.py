@@ -2,6 +2,8 @@
 Transactions controller — port of transactionsController.js.
 """
 
+import asyncio
+
 from flask import request, jsonify, g
 from models.user_model import find_user_by_email
 from models.account_model import find_account_by_user_id, find_account_by_id
@@ -14,6 +16,53 @@ from models.transaction_model import (
 )
 from services.risk_service import assess_transfer_risk
 from utils.mongo_json import serialize_doc
+
+EXECUTION_RISK_BLOCK_MESSAGE = "Transfer requires additional review."
+
+
+def _chat_completion_fn():
+    try:
+        from ai.assistant.chat_assistant import _create_chat_completion, has_openai_key
+        from ai.assistant.openai_client import openai_client
+        if has_openai_key and openai_client:
+            return _create_chat_completion
+    except Exception:
+        pass
+    return None
+
+
+def run_transfer_execution_risk(
+    *,
+    sender_user: dict,
+    receiver_user: dict,
+    sender_account: dict,
+    receiver_account: dict,
+    amount: float,
+    description: str | None,
+    services=None,
+    create_chat_completion=None,
+    abort_signal=None,
+) -> dict:
+    from ai.services.transfer_risk_gate import evaluate_transfer_execution_risk
+
+    if services is None:
+        from ai.services.business_services import create_business_services
+        services = create_business_services()
+
+    async def _evaluate():
+        return await evaluate_transfer_execution_risk(
+            sender_user=sender_user,
+            receiver_user=receiver_user,
+            sender_account=sender_account,
+            receiver_account=receiver_account,
+            amount=amount,
+            description=description,
+            services=services,
+            create_chat_completion=create_chat_completion if create_chat_completion is not None else _chat_completion_fn(),
+            abort_signal=abort_signal,
+        )
+
+    return asyncio.run(_evaluate())
 
 
 # ---------------------------------------------------------------------------
@@ -76,9 +125,21 @@ def create_transaction():
                 }
             ), 409
 
-        if risk_assessment.get("requiresReview"):
+        execution_risk = run_transfer_execution_risk(
+            sender_user=g.user,
+            receiver_user=receiver_user,
+            sender_account=sender_account,
+            receiver_account=receiver_account,
+            amount=numeric_amount,
+            description=description,
+        )
+        risk_decision = execution_risk.get("riskDecision") or {}
+        if risk_decision.get("allowed") is not True:
             return jsonify(
-                {"message": "Transfer blocked for manual review", "riskAssessment": risk_assessment}
+                {
+                    "message": EXECUTION_RISK_BLOCK_MESSAGE,
+                    "riskDecision": risk_decision,
+                }
             ), 403
 
         transaction = transfer_money(
@@ -97,6 +158,7 @@ def create_transaction():
                 "senderBalance": updated_sender.get("balance") if updated_sender else None,
                 "receiverBalance": updated_receiver.get("balance") if updated_receiver else None,
                 "riskAssessment": risk_assessment,
+                "riskDecision": risk_decision,
                 "transaction": serialize_doc(transaction),
             }
         ), 201

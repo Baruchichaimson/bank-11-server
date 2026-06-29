@@ -706,21 +706,13 @@ def create_banking_graph():
     graph.add_edge("user_request", "find_intent")
     graph.add_edge("find_intent", "workflow_router")
     graph.add_conditional_edges("workflow_router", _route_to_workflow, {
-        "transfer_workflow": "deterministic_risk_node",
+        "transfer_workflow": "transfer_workflow",
         "transactions_workflow": "transactions_workflow",
         "balance_workflow": "balance_workflow",
         "support_workflow": "support_workflow",
         "personal_details_workflow": "personal_details_workflow",
         "unknown_workflow": "unknown_workflow",
     })
-    graph.add_edge("deterministic_risk_node", "risk_analysis_node")
-    graph.add_edge("risk_analysis_node", "risk_judge_node")
-    graph.add_edge("risk_judge_node", "risk_decision_node")
-    graph.add_conditional_edges("risk_decision_node", _route_after_risk_decision, {
-        "transfer_workflow": "transfer_workflow",
-        "blocked_transfer_response_node": "blocked_transfer_response_node",
-    })
-    graph.add_edge("blocked_transfer_response_node", "return_response")
     graph.add_edge("transfer_workflow", "return_response")
     graph.add_edge("transactions_workflow", "return_response")
     graph.add_edge("balance_workflow", "return_response")
