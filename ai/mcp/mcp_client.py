@@ -7,7 +7,8 @@ from typing import Any
 
 import httpx
 from mcp import ClientSession
-from mcp.client.streamable_http import streamablehttp_client
+from mcp.client.streamable_http import streamable_http_client
+from mcp.shared._httpx_utils import create_mcp_http_client
 from mcp.types import AnyUrl, TextContent
 
 from config import settings
@@ -99,18 +100,17 @@ def account_current_resource_uri(user_id: str) -> str:
 
 
 async def _with_mcp_session(handler):
-    timeout = httpx.Timeout(_timeout_seconds())
+    timeout_seconds = _timeout_seconds()
+    client_timeout = httpx.Timeout(timeout_seconds, read=max(timeout_seconds, 30.0))
     try:
-        async with streamablehttp_client(
-            _mcp_server_url(),
-            httpx_client_factory=lambda headers=None: httpx.AsyncClient(
-                timeout=timeout,
-                headers=headers,
-            ),
-        ) as (read_stream, write_stream, _):
-            async with ClientSession(read_stream, write_stream) as session:
-                await session.initialize()
-                return await handler(session)
+        async with create_mcp_http_client(timeout=client_timeout) as http_client:
+            async with streamable_http_client(
+                _mcp_server_url(),
+                http_client=http_client,
+            ) as (read_stream, write_stream, _):
+                async with ClientSession(read_stream, write_stream) as session:
+                    await session.initialize()
+                    return await handler(session)
     except MCPFetchError:
         raise
     except Exception as err:
