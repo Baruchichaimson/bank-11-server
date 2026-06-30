@@ -34,8 +34,8 @@ def test_known_operation_resolves_runtime_settings():
     settings = resolve_operation_config("user_intent")
 
     assert settings["operation"] == "user_intent"
-    assert settings["provider"] == "openai"
-    assert settings["model"] == "gpt-4o-mini"
+    assert settings["provider"] == "groq"
+    assert settings["model"] == "llama-3.1-8b-instant"
     assert settings["response_format"] == {"type": "json_object"}
     assert settings["prompt_file"] == "prompts/user_intent.md"
 
@@ -74,16 +74,17 @@ async def test_invoke_llm_json_uses_injected_chat_completion_and_parses_json():
 
     assert result["level"] == "LOW"
     assert result["reason"] == "ok"
-    assert result["provider"] == "openai"
-    assert result["model"] == "gpt-4o-mini"
+    assert result["provider"] == "groq"
+    assert result["model"] == "llama-3.1-8b-instant"
     assert len(calls) == 1
     assert calls[0]["operation"] == "risk_analysis"
-    assert calls[0]["provider"] == "openai"
-    assert calls[0]["model"] == "gpt-4o-mini"
+    assert calls[0]["provider"] == "groq"
+    assert calls[0]["model"] == "llama-3.1-8b-instant"
     assert calls[0]["response_format"] == {"type": "json_object"}
     assert calls[0]["prompt_file"] == "prompts/risk_analysis.md"
     assert calls[0]["metadata"]["operation"] == "risk_analysis"
     assert calls[0]["metadata"]["prompt_source"] == "local"
+    assert calls[0]["metadata"]["config_source"] == "local"
     assert calls[0]["metadata"]["prompt_override_used"] is False
     assert calls[0]["metadata"]["response_format_type"] == "json_object"
     assert calls[0]["metadata"]["cost_tier"] == "low"
@@ -123,6 +124,7 @@ async def test_invoke_llm_json_user_intent_routes_through_configured_prompt():
     assert calls[0]["operation"] == "user_intent"
     assert calls[0]["prompt_file"] == "prompts/user_intent.md"
     assert calls[0]["metadata"]["prompt_source"] == "local"
+    assert calls[0]["metadata"]["config_source"] == "local"
     assert calls[0]["metadata"]["prompt_override_used"] is False
     assert calls[0]["metadata"]["response_format_type"] == "json_object"
     assert calls[0]["messages"][0]["content"].startswith("You are a banking intent router")

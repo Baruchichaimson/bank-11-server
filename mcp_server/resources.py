@@ -1,8 +1,22 @@
-"""MCP resource registration stubs (Stage 7C)."""
+"""MCP resource registration (Stage 7B config, Stage 7C tools later)."""
+
+import json
+from pathlib import Path
 
 from mcp.server.fastmcp import FastMCP
 
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+LLM_ROUTING_CONFIG_PATH = PROJECT_ROOT / "config" / "llm_routing.json"
+
 
 def register_resources(mcp: FastMCP) -> None:
-    """Register MCP resources. Real resources move here in Stage 7C."""
-    # TODO(7C): register config and prompt resources.
+    """Expose LLM routing config over MCP."""
+
+    @mcp.resource("config://llm_routing")
+    def llm_routing_config() -> str:
+        """LLM routing configuration (mirrors config/llm_routing.json)."""
+        raw = LLM_ROUTING_CONFIG_PATH.read_text(encoding="utf-8")
+        parsed = json.loads(raw)
+        if not isinstance(parsed, dict):
+            raise RuntimeError("llm_routing.json must contain a JSON object")
+        return json.dumps(parsed, ensure_ascii=False)

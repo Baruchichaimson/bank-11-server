@@ -17,6 +17,7 @@ os.environ["FLASK_TESTING"] = "1"
 os.environ["LANGFUSE_ENABLED"] = "false"
 os.environ["LANGFUSE_CAPTURE_IO"] = "false"
 os.environ["ASSISTANT_TRACE_LOGS"] = "false"
+os.environ.setdefault("MCP_ENABLED", "false")
 
 
 def _mock_db():

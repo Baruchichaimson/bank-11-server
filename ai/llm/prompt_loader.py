@@ -1,7 +1,9 @@
 import json
 from pathlib import Path
 
+from config import settings
 from ai.llm.errors import PromptLoadError
+from ai.mcp.mcp_client import MCPFetchError, fetch_prompt, mcp_prompt_name_for_path
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -94,6 +96,69 @@ def resolve_prompt_file(
     }
 
 
+def _load_local_prompt_content(prompt_file: str) -> str:
+    path = _resolve_project_path(prompt_file)
+    if not path.exists() or not path.is_file():
+        raise PromptLoadError(f"Prompt file not found: {prompt_file}")
+
+    content = path.read_text(encoding="utf-8").strip()
+    if not content:
+        raise PromptLoadError(f"Prompt file is empty: {prompt_file}")
+    return content
+
+
+def _mcp_fallback_metadata(err: MCPFetchError) -> dict:
+    return {
+        "mcp_fallback": True,
+        "mcp_error": str(err),
+    }
+
+
+async def aload_prompt(
+    prompt_file: str,
+    *,
+    provider: str | None = None,
+    model: str | None = None,
+    prompt_overrides=None,
+    provider_prompt_overrides=None,
+    model_prompt_overrides=None,
+) -> tuple[str, dict]:
+    resolution = resolve_prompt_file(
+        prompt_file,
+        provider=provider,
+        model=model,
+        prompt_overrides=prompt_overrides,
+        provider_prompt_overrides=provider_prompt_overrides,
+        model_prompt_overrides=model_prompt_overrides,
+    )
+    resolved_prompt_file = resolution["prompt_file"]
+    mcp_meta: dict = {}
+
+    if settings.MCP_ENABLED:
+        mcp_name = mcp_prompt_name_for_path(resolved_prompt_file)
+        if mcp_name:
+            try:
+                content = await fetch_prompt(mcp_name)
+                return content, {
+                    **resolution,
+                    "prompt_source": "mcp",
+                    **mcp_meta,
+                }
+            except MCPFetchError as err:
+                if not settings.MCP_FALLBACK_TO_LOCAL:
+                    raise PromptLoadError(
+                        f"MCP prompt fetch failed and fallback is disabled: {mcp_name}"
+                    ) from err
+                mcp_meta = _mcp_fallback_metadata(err)
+
+    content = _load_local_prompt_content(resolved_prompt_file)
+    return content, {
+        **resolution,
+        "prompt_source": "local",
+        **mcp_meta,
+    }
+
+
 def load_prompt(
     prompt_file: str,
     *,
@@ -111,14 +176,7 @@ def load_prompt(
         provider_prompt_overrides=provider_prompt_overrides,
         model_prompt_overrides=model_prompt_overrides,
     )
-    path = _resolve_project_path(resolution["prompt_file"])
-    if not path.exists() or not path.is_file():
-        raise PromptLoadError(f"Prompt file not found: {resolution['prompt_file']}")
-
-    content = path.read_text(encoding="utf-8").strip()
-    if not content:
-        raise PromptLoadError(f"Prompt file is empty: {resolution['prompt_file']}")
-    return content
+    return _load_local_prompt_content(resolution["prompt_file"])
 
 
 def load_persona_config() -> dict:
@@ -137,6 +195,30 @@ def resolve_persona(persona: str | None) -> dict:
     persona_config["resolvedPersona"] = resolved_name
     persona_config["prompt_file"] = persona_config.get("prompt_file") or f"prompts/response/{resolved_name}.md"
     return persona_config
+
+
+async def aload_response_prompt(
+    persona: str | None = None,
+    *,
+    provider: str | None = None,
+    model: str | None = None,
+    prompt_overrides=None,
+    provider_prompt_overrides=None,
+    model_prompt_overrides=None,
+) -> tuple[str, dict]:
+    persona_config = resolve_persona(persona)
+    prompt, details = await aload_prompt(
+        persona_config["prompt_file"],
+        provider=provider,
+        model=model,
+        prompt_overrides=prompt_overrides,
+        provider_prompt_overrides=provider_prompt_overrides,
+        model_prompt_overrides=model_prompt_overrides,
+    )
+    return prompt, {
+        **details,
+        "persona": persona_config,
+    }
 
 
 def load_response_prompt(

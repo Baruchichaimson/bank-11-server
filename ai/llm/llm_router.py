@@ -1,9 +1,11 @@
 import json
 import time
 
-from ai.llm.errors import LLMResponseError, UnknownOperationError
-from ai.llm.prompt_loader import PROJECT_ROOT, load_prompt, load_response_prompt
+from config import settings
+from ai.llm.errors import LLMResponseError, LLMRoutingError, UnknownOperationError
+from ai.llm.prompt_loader import PROJECT_ROOT, aload_prompt, aload_response_prompt
 from ai.llm.provider_clients import invoke_provider_chat_completion
+from ai.mcp.mcp_client import MCPFetchError, fetch_llm_routing_config
 from ai.shared.json_safe import make_json_safe
 from observability.langfuse_tracing import record_event, safe_metadata, start_span
 
@@ -15,6 +17,27 @@ def load_llm_routing_config() -> dict:
     return json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
 
 
+def _mcp_fallback_metadata(err: MCPFetchError) -> dict:
+    return {
+        "mcp_fallback": True,
+        "mcp_error": str(err),
+    }
+
+
+async def aload_llm_routing_config() -> tuple[dict, str, dict]:
+    if not settings.MCP_ENABLED:
+        return load_llm_routing_config(), "local", {}
+
+    try:
+        return await fetch_llm_routing_config(), "mcp", {}
+    except MCPFetchError as err:
+        if not settings.MCP_FALLBACK_TO_LOCAL:
+            raise LLMRoutingError(
+                "MCP llm_routing config fetch failed and fallback is disabled"
+            ) from err
+        return load_llm_routing_config(), "local", _mcp_fallback_metadata(err)
+
+
 def resolve_operation_config(operation: str) -> dict:
     op = str(operation or "").strip()
     config = load_llm_routing_config()
@@ -22,12 +45,27 @@ def resolve_operation_config(operation: str) -> dict:
     if op not in operations:
         raise UnknownOperationError(f"Unknown LLM operation: {op}")
 
-    settings = dict(operations[op] or {})
-    settings["operation"] = op
+    settings_dict = dict(operations[op] or {})
+    settings_dict["operation"] = op
     for key in ("provider", "model", "prompt_file"):
-        if not settings.get(key):
+        if not settings_dict.get(key):
             raise UnknownOperationError(f"LLM operation '{op}' is missing required setting: {key}")
-    return settings
+    return settings_dict
+
+
+async def aresolve_operation_config(operation: str) -> tuple[dict, str, dict]:
+    config, config_source, config_meta = await aload_llm_routing_config()
+    op = str(operation or "").strip()
+    operations = config.get("operations") or {}
+    if op not in operations:
+        raise UnknownOperationError(f"Unknown LLM operation: {op}")
+
+    settings_dict = dict(operations[op] or {})
+    settings_dict["operation"] = op
+    for key in ("provider", "model", "prompt_file"):
+        if not settings_dict.get(key):
+            raise UnknownOperationError(f"LLM operation '{op}' is missing required setting: {key}")
+    return settings_dict, config_source, config_meta
 
 
 def _extract_content(response) -> str:
@@ -60,6 +98,8 @@ def _build_payload(
     prompt_source: str = "local",
     prompt_override_used: bool = False,
     persona: dict | None = None,
+    config_source: str = "local",
+    mcp_metadata: dict | None = None,
 ) -> dict:
     response_format = None if text else settings.get("response_format")
     response_format_type = None
@@ -74,9 +114,12 @@ def _build_payload(
         "max_tokens": settings.get("max_tokens"),
         "cost_tier": settings.get("cost_tier"),
         "prompt_source": prompt_source,
+        "config_source": config_source,
         "prompt_override_used": prompt_override_used,
         "response_format_type": response_format_type,
     }
+    if mcp_metadata:
+        metadata.update(mcp_metadata)
     if persona:
         metadata.update(
             {
@@ -108,35 +151,53 @@ def _build_payload(
 
 async def _invoke(operation: str, variables: dict, *, create_chat_completion=None, abort_signal=None, text: bool = False):
     start = time.perf_counter()
-    settings = resolve_operation_config(operation)
+    settings_dict, config_source, config_meta = await aresolve_operation_config(operation)
     prompt_source = "local"
     prompt_override_used = False
     persona = None
+    prompt_meta: dict = {}
+    mcp_metadata = dict(config_meta)
+
     if text:
-        prompt, prompt_details = load_response_prompt(
+        prompt, prompt_details = await aload_response_prompt(
             persona=(variables or {}).get("persona"),
-            provider=settings.get("provider"),
-            model=settings.get("model"),
-            prompt_overrides=settings.get("prompt_overrides"),
-            provider_prompt_overrides=settings.get("provider_prompt_overrides"),
-            model_prompt_overrides=settings.get("model_prompt_overrides"),
+            provider=settings_dict.get("provider"),
+            model=settings_dict.get("model"),
+            prompt_overrides=settings_dict.get("prompt_overrides"),
+            provider_prompt_overrides=settings_dict.get("provider_prompt_overrides"),
+            model_prompt_overrides=settings_dict.get("model_prompt_overrides"),
         )
         prompt_source = prompt_details.get("prompt_source") or "local"
         prompt_override_used = bool(prompt_details.get("prompt_override_used"))
         persona = prompt_details.get("persona")
         resolved_prompt_file = prompt_details.get("prompt_file")
-        settings = {**settings, "prompt_file": resolved_prompt_file}
+        settings_dict = {**settings_dict, "prompt_file": resolved_prompt_file}
+        prompt_meta = {
+            key: value
+            for key, value in prompt_details.items()
+            if key in {"mcp_fallback", "mcp_error"}
+        }
+        mcp_metadata.update(prompt_meta)
     else:
-        prompt = load_prompt(
-            settings.get("prompt_file"),
-            provider=settings.get("provider"),
-            model=settings.get("model"),
-            prompt_overrides=settings.get("prompt_overrides"),
-            provider_prompt_overrides=settings.get("provider_prompt_overrides"),
-            model_prompt_overrides=settings.get("model_prompt_overrides"),
+        prompt, prompt_details = await aload_prompt(
+            settings_dict.get("prompt_file"),
+            provider=settings_dict.get("provider"),
+            model=settings_dict.get("model"),
+            prompt_overrides=settings_dict.get("prompt_overrides"),
+            provider_prompt_overrides=settings_dict.get("provider_prompt_overrides"),
+            model_prompt_overrides=settings_dict.get("model_prompt_overrides"),
         )
+        prompt_source = prompt_details.get("prompt_source") or "local"
+        prompt_override_used = bool(prompt_details.get("prompt_override_used"))
+        prompt_meta = {
+            key: value
+            for key, value in prompt_details.items()
+            if key in {"mcp_fallback", "mcp_error"}
+        }
+        mcp_metadata.update(prompt_meta)
+
     payload = _build_payload(
-        settings=settings,
+        settings=settings_dict,
         prompt=prompt,
         variables=variables,
         text=text,
@@ -144,17 +205,21 @@ async def _invoke(operation: str, variables: dict, *, create_chat_completion=Non
         prompt_source=prompt_source,
         prompt_override_used=prompt_override_used,
         persona=persona,
+        config_source=config_source,
+        mcp_metadata=mcp_metadata,
     )
     span = start_span(
         name="llm_router",
         input={
-            "operation": settings["operation"],
-            "provider": settings.get("provider"),
-            "model": settings.get("model"),
-            "prompt_file": settings.get("prompt_file"),
+            "operation": settings_dict["operation"],
+            "provider": settings_dict.get("provider"),
+            "model": settings_dict.get("model"),
+            "prompt_file": settings_dict.get("prompt_file"),
             "prompt_source": prompt_source,
+            "config_source": config_source,
             "prompt_override_used": prompt_override_used,
             "persona": (persona or {}).get("resolvedPersona") if isinstance(persona, dict) else None,
+            **{key: mcp_metadata.get(key) for key in ("mcp_fallback", "mcp_error") if key in mcp_metadata},
         },
         metadata=safe_metadata(payload.get("metadata")),
     )
@@ -174,7 +239,7 @@ async def _invoke(operation: str, variables: dict, *, create_chat_completion=Non
         if not isinstance(parsed, dict):
             raise LLMResponseError(f"LLM operation '{operation}' returned non-object JSON")
         success = True
-        return _attach_response_metadata(parsed, response, settings)
+        return _attach_response_metadata(parsed, response, settings_dict)
     finally:
         duration_ms = (time.perf_counter() - start) * 1000
         metadata = {
@@ -182,7 +247,7 @@ async def _invoke(operation: str, variables: dict, *, create_chat_completion=Non
             "success": success,
             "duration_ms": duration_ms,
         }
-        span.end(output={"operation": settings["operation"], "success": success, "duration_ms": duration_ms}, metadata=metadata)
+        span.end(output={"operation": settings_dict["operation"], "success": success, "duration_ms": duration_ms}, metadata=metadata)
         record_event(name="llm_operation_completed", metadata=safe_metadata(metadata))
 
 

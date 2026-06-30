@@ -58,6 +58,11 @@ LANGFUSE_BASE_URL = os.environ.get("LANGFUSE_BASE_URL", "https://cloud.langfuse.
 LANGFUSE_CAPTURE_IO = os.environ.get("LANGFUSE_CAPTURE_IO", "false").lower() == "true"
 ASSISTANT_TRACE_LOGS = os.environ.get("ASSISTANT_TRACE_LOGS", "false").lower() == "true"
 
+MCP_ENABLED = os.environ.get("MCP_ENABLED", "false").lower() == "true"
+MCP_SERVER_URL = os.environ.get("MCP_SERVER_URL", "http://localhost:8000/mcp")
+MCP_TIMEOUT_MS = _get_env_int("MCP_TIMEOUT_MS", 3000)
+MCP_FALLBACK_TO_LOCAL = os.environ.get("MCP_FALLBACK_TO_LOCAL", "true").lower() == "true"
+
 GCS_BUCKET_NAME = os.environ.get("GCS_BUCKET_NAME", "")
 GCS_SIGNED_URL_MINUTES = _get_env_int("GCS_SIGNED_URL_MINUTES", 5)
 GCS_SIGNING_SERVICE_ACCOUNT_EMAIL = os.environ.get("GCS_SIGNING_SERVICE_ACCOUNT_EMAIL", "")
