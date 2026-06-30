@@ -74,16 +74,41 @@ requiring Langfuse credentials.
 
 ## Run the Server
 
+The Flask/LangGraph backend and the MCP server are separate processes.
+
+| Service | Default port | Command |
+|---|---|---|
+| Flask / LangGraph API | `5002` (set `PORT`) | `python app.py` |
+| MCP server (Stage 7A skeleton) | `8000` | `python -m mcp_server.server` |
+
+### Flask / LangGraph API
+
 ```bash
 # Option A — direct Python (starts uvicorn)
-python app.py
+PORT=5002 python app.py
 
 # Option B — uvicorn
-uvicorn app:asgi_app --host 0.0.0.0 --port 3000
+uvicorn app:asgi_app --host 0.0.0.0 --port 5002
 
 # Option C — Gunicorn with an ASGI worker (production)
-gunicorn app:asgi_app --bind 0.0.0.0:3000 --workers 2 -k uvicorn.workers.UvicornWorker
+gunicorn app:asgi_app --bind 0.0.0.0:5002 --workers 2 -k uvicorn.workers.UvicornWorker
 ```
+
+### MCP server (independent process)
+
+```bash
+python -m mcp_server.server
+```
+
+Optional env vars: `MCP_HOST` (default `0.0.0.0`), `MCP_PORT` (default `8000`).
+
+Verify startup:
+
+```bash
+curl http://localhost:8000/health
+```
+
+Expected response: `{"status":"ok","service":"bank-mcp"}`. MCP endpoint: `http://localhost:8000/mcp`.
 
 ---
 

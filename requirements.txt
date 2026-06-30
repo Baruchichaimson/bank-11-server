@@ -21,3 +21,4 @@ pytest-cov>=5.0.0
 pytest-xdist>=3.6.1
 langfuse==4.9.0
 google-cloud-storage>=2.18.0
+mcp>=1.9.0,<2
