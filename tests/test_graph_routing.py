@@ -5,6 +5,7 @@ from uuid import uuid4
 import pytest
 
 from ai.graph.banking_graph import run_banking_graph
+from ai.services.business_services import create_business_services
 
 
 def _completion_response(payload: dict):
@@ -290,6 +291,57 @@ async def test_inline_transfer_form_requires_confirmation_only_for_high_amount()
     assert executed["nextTransferState"] is None
     assert "ההעברה הושלמה בהצלחה" in executed["reply"]
     assert services["transactionService"].executed["amount"] == 1500.0
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("message", ["מה קורה?", "מה נשמע?", "שלום"])
+async def test_casual_greeting_routes_to_unknown_workflow(message):
+    result = await run_banking_graph(
+        user_input=message,
+        user_id="user-1",
+        user_email="dana@example.com",
+        history=[],
+        create_chat_completion=_fake_llm({
+            message: {
+                "domain": "support",
+                "intent": "contact_support",
+                "confidence": 0.98,
+                "semanticQuery": None,
+                "toolName": "open_video_call_window",
+            }
+        }),
+        services=_services(),
+        thread_id=_thread_id("casual-greeting"),
+    )
+
+    assert result["action"] is None
+    assert "עוזר בנקאי" in result["reply"] or "banking assistant" in result["reply"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("message", ["פתח לי שיחת וידאו", "אני צריך נציג"])
+async def test_explicit_support_routes_to_video_call_action(message):
+    result = await run_banking_graph(
+        user_input=message,
+        user_id="user-1",
+        user_email="dana@example.com",
+        history=[],
+        create_chat_completion=_fake_llm({
+            message: {
+                "domain": "support",
+                "intent": "contact_support",
+                "confidence": 0.98,
+                "semanticQuery": None,
+                "toolName": "open_video_call_window",
+            }
+        }),
+        services=create_business_services(),
+        thread_id=_thread_id("support"),
+    )
+
+    action = result.get("action")
+    action_type = action.get("type") if isinstance(action, dict) else action
+    assert action_type == "open_video_call"
 
 
 @pytest.mark.asyncio

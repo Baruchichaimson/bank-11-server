@@ -6,6 +6,7 @@ import pytest
 
 from ai.intents.detect_intent import detect_intent
 from ai.intents.llm_semantic_parser import build_semantic_parser_prompt, parse_query_with_llm
+from ai.graph.workflow_router import route_workflow
 
 
 def _completion_response(payload: dict):
@@ -318,6 +319,74 @@ async def test_llm_hebrew_recent_transfers_still_returns_recent_transactions():
     assert result["intent"] == "recent_transactions"
     assert result["semanticQuery"]["aggregation"] == "list"
     assert result["semanticQuery"]["filters"]["type"] == "transfer"
+
+
+def _support_payload(*, tool_name="open_video_call_window"):
+    return {
+        "domain": "support",
+        "intent": "contact_support",
+        "confidence": 0.98,
+        "isAmbiguous": False,
+        "ambiguityReason": None,
+        "toolName": tool_name,
+        "semanticQuery": None,
+        "transferPayload": None,
+    }
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("message", ["מה קורה?", "מה נשמע?", "שלום", "היי", "hello", "how are you?"])
+async def test_casual_greetings_route_to_unknown_without_llm(message):
+    async def fail_if_called(_payload):
+        raise AssertionError("LLM should not run for casual greeting")
+
+    result = await detect_intent(
+        user_input=message,
+        history=[],
+        create_chat_completion=fail_if_called,
+    )
+
+    assert result["domain"] == "unknown"
+    assert result["intent"] == "unknown"
+    assert result["source"] == "casual_phrase_guard"
+    assert route_workflow(intent=result["intent"], domain=result["domain"]) == "unknown_workflow"
+
+
+@pytest.mark.asyncio
+async def test_casual_greeting_overrides_wrong_llm_support_classification():
+    async def fake_chat_completion(_payload):
+        return _completion_response(_support_payload())
+
+    result = await detect_intent(
+        user_input="מה קורה?",
+        history=[],
+        create_chat_completion=fake_chat_completion,
+    )
+
+    assert result["domain"] == "unknown"
+    assert result["intent"] == "unknown"
+    assert result["source"] == "casual_phrase_guard"
+    assert result.get("tool") is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("message", ["פתח לי שיחת וידאו", "אני צריך נציג"])
+async def test_explicit_support_requests_keep_support_intent(message):
+    async def fake_chat_completion(payload):
+        user_payload = _user_prompt_payload(payload)
+        assert user_payload["currentUserMessage"] == message
+        return _completion_response(_support_payload())
+
+    result = await detect_intent(
+        user_input=message,
+        history=[],
+        create_chat_completion=fake_chat_completion,
+    )
+
+    assert result["domain"] == "support"
+    assert result["intent"] == "contact_support"
+    assert result["tool"]["name"] == "open_video_call_window"
+    assert route_workflow(intent=result["intent"], domain=result["domain"]) == "support_workflow"
 
 
 @pytest.mark.asyncio
