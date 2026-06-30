@@ -44,15 +44,9 @@ def assess_transfer_risk(
     reasons = []
     score = 0
 
-    if amount >= 20000:
+    if amount > 1000:
         score += 70
-        reasons.append("Very high transfer amount")
-    elif amount >= 10000:
-        score += 45
-        reasons.append("High transfer amount")
-    elif amount >= 5000:
-        score += 25
-        reasons.append("Elevated transfer amount")
+        reasons.append("Transfer amount above 1000")
 
     has_history = _has_beneficiary_history(sender_email, receiver_email)
     if not has_history:

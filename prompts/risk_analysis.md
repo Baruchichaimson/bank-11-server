@@ -11,5 +11,10 @@ Required JSON shape:
 
 Use only these levels: LOW, MEDIUM, HIGH.
 Use MEDIUM, not MID.
+Business policy:
+- If amount is greater than 1000, classify the risk level as HIGH.
+- HIGH risk does not mean the transfer must be blocked.
+- If remainingBalance is zero or positive, the transfer can still be allowed.
+- If remainingBalance is negative, explain that the transfer has insufficient funds.
 If the details are incomplete or ambiguous, choose HIGH and explain what is missing.
 Keep the reason concise and suitable for audit review.
