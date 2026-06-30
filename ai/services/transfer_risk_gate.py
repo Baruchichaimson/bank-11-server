@@ -34,14 +34,58 @@ def _evaluate_deterministic_risk(*, services: dict | None, payload: dict) -> dic
     return evaluator(payload)
 
 
-def _decision_for(*, deterministic_risk: dict, risk_analysis: dict, risk_judge: dict) -> dict:
-    if (deterministic_risk or {}).get("requiresReview") is True:
-        return {"allowed": False, "status": "blocked", "reason": "Transfer requires additional review."}
-    if (risk_analysis or {}).get("level") == "HIGH":
-        return {"allowed": False, "status": "blocked", "reason": "Transfer requires additional review."}
-    if (risk_judge or {}).get("approval") != "ACCEPTED":
-        return {"allowed": False, "status": "blocked", "reason": "Transfer requires additional review."}
-    return {"allowed": True, "status": "evaluated", "reason": "Risk checks passed."}
+def _remaining_balance_from(deterministic_risk: dict, fallback_remaining_balance=None) -> float | None:
+    if fallback_remaining_balance is not None:
+        try:
+            return float(fallback_remaining_balance)
+        except (TypeError, ValueError):
+            pass
+
+    checks = (deterministic_risk or {}).get("checks") or {}
+    value = checks.get("remainingBalance")
+
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _has_insufficient_funds(deterministic_risk: dict, remaining_balance=None) -> bool:
+    resolved_remaining_balance = _remaining_balance_from(
+        deterministic_risk,
+        fallback_remaining_balance=remaining_balance,
+    )
+
+    if resolved_remaining_balance is not None:
+        return resolved_remaining_balance < 0
+
+    reasons = [
+        str(reason).lower()
+        for reason in ((deterministic_risk or {}).get("reasons") or [])
+    ]
+
+    return any("insufficient funds" in reason for reason in reasons)
+
+
+def _decision_for(
+    *,
+    deterministic_risk: dict,
+    risk_analysis: dict,
+    risk_judge: dict,
+    remaining_balance=None,
+) -> dict:
+    if _has_insufficient_funds(deterministic_risk, remaining_balance=remaining_balance):
+        return {
+            "allowed": False,
+            "status": "blocked",
+            "reason": "Insufficient funds for this transfer.",
+        }
+
+    return {
+        "allowed": True,
+        "status": "evaluated",
+        "reason": "Transfer allowed. Balance is sufficient; LLM risk signals are advisory only.",
+    }
 
 
 def _summary(*, deterministic_risk: dict, risk_analysis: dict, risk_judge: dict, risk_decision: dict) -> dict:
@@ -182,6 +226,7 @@ async def evaluate_transfer_execution_risk(
             deterministic_risk=deterministic_risk,
             risk_analysis=risk_analysis,
             risk_judge=risk_judge,
+            remaining_balance=remaining_balance,
         )
         summary = _summary(
             deterministic_risk=deterministic_risk,
