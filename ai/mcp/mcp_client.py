@@ -13,6 +13,7 @@ from mcp.types import AnyUrl, TextContent
 from config import settings
 
 LLM_ROUTING_RESOURCE_URI = "config://llm_routing"
+ACCOUNT_CURRENT_RESOURCE_PREFIX = "account://current"
 
 PROMPT_FILE_TO_MCP_NAME: dict[str, str] = {
     "prompts/user_intent.md": "user_intent",
@@ -68,8 +69,33 @@ def _extract_resource_json(result) -> dict[str, Any]:
             parsed = json.loads(text)
             if isinstance(parsed, dict):
                 return parsed
-            raise MCPFetchError("MCP llm_routing resource did not return a JSON object")
-    raise MCPFetchError("MCP llm_routing resource response was empty")
+            raise MCPFetchError("MCP resource did not return a JSON object")
+    raise MCPFetchError("MCP resource response was empty")
+
+
+def _extract_tool_json(result) -> dict[str, Any]:
+    for content in getattr(result, "content", None) or []:
+        text = getattr(content, "text", None)
+        if isinstance(text, str) and text.strip():
+            parsed = json.loads(text)
+            if isinstance(parsed, dict):
+                return parsed
+            raise MCPFetchError("MCP tool did not return a JSON object")
+        if hasattr(content, "type") and getattr(content, "type", None) == "text":
+            parsed = json.loads(getattr(content, "text", "") or "")
+            if isinstance(parsed, dict):
+                return parsed
+    structured = getattr(result, "structuredContent", None)
+    if isinstance(structured, dict):
+        return structured
+    raise MCPFetchError("MCP tool response was empty")
+
+
+def account_current_resource_uri(user_id: str) -> str:
+    user_key = str(user_id or "").strip()
+    if not user_key:
+        raise MCPFetchError("user_id is required for account://current")
+    return f"{ACCOUNT_CURRENT_RESOURCE_PREFIX}/{user_key}"
 
 
 async def _with_mcp_session(handler):
@@ -107,5 +133,30 @@ async def fetch_llm_routing_config() -> dict[str, Any]:
     async def _handler(session: ClientSession) -> dict[str, Any]:
         result = await session.read_resource(AnyUrl(LLM_ROUTING_RESOURCE_URI))
         return _extract_resource_json(result)
+
+    return await _with_mcp_session(_handler)
+
+
+async def fetch_current_account(user_id: str) -> dict[str, Any]:
+    uri = account_current_resource_uri(user_id)
+
+    async def _handler(session: ClientSession) -> dict[str, Any]:
+        result = await session.read_resource(AnyUrl(uri))
+        return _extract_resource_json(result)
+
+    return await _with_mcp_session(_handler)
+
+
+async def call_evaluate_det_risk(payload: dict[str, Any]) -> dict[str, Any]:
+    arguments = {
+        "senderEmail": payload.get("senderEmail", ""),
+        "receiverEmail": payload.get("receiverEmail", ""),
+        "amount": float(payload.get("amount", 0)),
+        "senderBalance": float(payload.get("senderBalance", 0)),
+    }
+
+    async def _handler(session: ClientSession) -> dict[str, Any]:
+        result = await session.call_tool("evaluate_det_risk", arguments=arguments)
+        return _extract_tool_json(result)
 
     return await _with_mcp_session(_handler)

@@ -1,6 +1,7 @@
 from ai.contracts.risk_analysis_contract import normalize_risk_analysis
 from ai.contracts.risk_judge_contract import normalize_risk_judge
 from ai.llm.llm_router import invoke_llm_json
+from ai.mcp.mcp_risk import evaluate_deterministic_transfer_risk, resolve_sender_account_context
 from ai.shared.json_safe import make_json_safe
 from observability.langfuse_tracing import record_event, safe_metadata, start_span, text_preview
 
@@ -9,29 +10,23 @@ def _safe_email(value) -> str:
     return str(value or "").strip().lower()
 
 
-def _account_balance(account: dict) -> float:
-    try:
-        return float((account or {}).get("balance") or 0)
-    except (TypeError, ValueError):
-        return 0.0
-
-
-def _evaluate_deterministic_risk(*, services: dict | None, payload: dict) -> dict:
-    risk_service = (services or {}).get("riskService")
-    if not risk_service:
-        from ai.services.risk_service import create_risk_service
-        risk_service = create_risk_service()
-
-    evaluator = getattr(risk_service, "evaluateRisk", None) or getattr(risk_service, "evaluate_risk", None)
-    if not evaluator:
-        return {
-            "status": "not_evaluated",
-            "level": "HIGH",
-            "score": None,
-            "requiresReview": True,
-            "reasons": ["Risk service unavailable."],
-        }
-    return evaluator(payload)
+def _risk_trace_metadata(
+    *,
+    account_context_source: str,
+    deterministic_risk_source: str,
+    account_meta: dict | None = None,
+    deterministic_meta: dict | None = None,
+) -> dict:
+    metadata = {
+        "account_context_source": account_context_source,
+        "deterministic_risk_source": deterministic_risk_source,
+    }
+    for extra in (account_meta or {}, deterministic_meta or {}):
+        if extra.get("mcp_fallback"):
+            metadata["mcp_fallback"] = True
+        if extra.get("mcp_error"):
+            metadata["mcp_error"] = text_preview(str(extra.get("mcp_error")), max_chars=120)
+    return metadata
 
 
 def _remaining_balance_from(deterministic_risk: dict, fallback_remaining_balance=None) -> float | None:
@@ -114,7 +109,10 @@ async def evaluate_transfer_execution_risk(
 ) -> dict:
     sender_email = _safe_email((sender_user or {}).get("email"))
     receiver_email = _safe_email((receiver_user or {}).get("email"))
-    sender_balance = _account_balance(sender_account)
+    sender_balance, account_context_source, account_meta = await resolve_sender_account_context(
+        sender_user=sender_user,
+        sender_account=sender_account,
+    )
     remaining_balance = sender_balance - float(amount or 0)
 
     deterministic_payload = {
@@ -131,6 +129,7 @@ async def evaluate_transfer_execution_risk(
             "hasReceiverEmail": bool(receiver_email),
             "amount": float(amount or 0),
             "senderBalance": sender_balance,
+            "accountContextSource": account_context_source,
         },
         metadata={"operation": "transfer_execution_risk_gate"},
     )
@@ -139,10 +138,17 @@ async def evaluate_transfer_execution_risk(
     risk_analysis = {}
     risk_judge = {}
     risk_decision = {"allowed": False, "status": "blocked", "reason": "Transfer requires additional review."}
+    deterministic_risk_source = "local"
+    deterministic_meta: dict = {}
 
     try:
         try:
-            deterministic_risk = _evaluate_deterministic_risk(services=services, payload=deterministic_payload)
+            deterministic_risk, deterministic_risk_source, deterministic_meta = (
+                await evaluate_deterministic_transfer_risk(
+                    payload=deterministic_payload,
+                    services=services,
+                )
+            )
         except Exception as err:
             deterministic_risk = {
                 "status": "not_evaluated",
@@ -151,6 +157,7 @@ async def evaluate_transfer_execution_risk(
                 "requiresReview": True,
                 "reasons": [f"Deterministic risk evaluation failed: {err}"],
             }
+            deterministic_meta = {}
 
         record_event(
             name="transfer_execution_deterministic_risk_evaluated",
@@ -158,6 +165,12 @@ async def evaluate_transfer_execution_risk(
                 "level": deterministic_risk.get("level"),
                 "requiresReview": deterministic_risk.get("requiresReview"),
                 "reasonCount": len(deterministic_risk.get("reasons") or []),
+                **_risk_trace_metadata(
+                    account_context_source=account_context_source,
+                    deterministic_risk_source=deterministic_risk_source,
+                    account_meta=account_meta,
+                    deterministic_meta=deterministic_meta,
+                ),
             }),
         )
 
@@ -255,4 +268,15 @@ async def evaluate_transfer_execution_risk(
             risk_judge=risk_judge,
             risk_decision=risk_decision,
         )
-        span.end(output=span_summary, metadata=safe_metadata(span_summary))
+        span.end(
+            output=span_summary,
+            metadata=safe_metadata({
+                **span_summary,
+                **_risk_trace_metadata(
+                    account_context_source=account_context_source,
+                    deterministic_risk_source=deterministic_risk_source,
+                    account_meta=account_meta,
+                    deterministic_meta=deterministic_meta,
+                ),
+            }),
+        )
