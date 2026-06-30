@@ -344,6 +344,48 @@ async def test_explicit_support_routes_to_video_call_action(message):
     assert action_type == "open_video_call"
 
 
+class _HistoryTransactionService:
+    def __init__(self):
+        self.last_query = None
+
+    async def execute_structured_query(self, *, user_id, user_email=None, query):
+        self.last_query = query
+        return {
+            "operation": "get_recent_transfers",
+            "result": {"found": True, "items": [{"amount": 100}], "count": 1},
+        }
+
+
+def _history_services():
+    return {"transactionService": _HistoryTransactionService()}
+
+
+@pytest.mark.asyncio
+async def test_hebrew_last_three_transfers_last_month_routes_to_transactions_workflow():
+    services = _history_services()
+
+    async def fail_intent_llm(payload):
+        if payload.get("operation") == "user_intent":
+            raise AssertionError("user_intent LLM should not run for transaction history query")
+        return _completion_response({"level": "LOW", "reason": "unused"})
+
+    result = await run_banking_graph(
+        user_input="מה הם 3 העברות האחרונות שביצעתי בחודש שעבר?",
+        user_id="user-1",
+        user_email="dana@example.com",
+        history=[],
+        create_chat_completion=fail_intent_llm,
+        services=services,
+        thread_id=_thread_id("transaction-history"),
+    )
+
+    assert result["action"] is None
+    assert result["nextTransferState"] is None
+    assert services["transactionService"].last_query["aggregation"] == "first_n"
+    assert services["transactionService"].last_query["limit"] == 3
+    assert services["transactionService"].last_query["timeRange"] == "last_month"
+
+
 @pytest.mark.asyncio
 async def test_prior_balance_history_does_not_override_current_profile_intent():
     result = await run_banking_graph(

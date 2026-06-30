@@ -390,6 +390,58 @@ async def test_explicit_support_requests_keep_support_intent(message):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "message",
+    [
+        "מה הם 3 העברות האחרונות שביצעתי בחודש שעבר?",
+        "תראה לי את ההעברות האחרונות",
+        "איזה העברות עשיתי החודש?",
+        "העברות אחרונות",
+        "תנועות אחרונות",
+        "עסקאות אחרונות",
+        "last transfers",
+        "recent transactions",
+        "show my transactions from last month",
+    ],
+)
+async def test_transaction_history_queries_route_to_transactions_workflow_without_llm(message):
+    async def fail_if_called(_payload):
+        raise AssertionError("LLM should not run for transaction history query")
+
+    result = await detect_intent(
+        user_input=message,
+        history=[],
+        create_chat_completion=fail_if_called,
+    )
+
+    assert result["domain"] == "transactions"
+    assert result["intent"] == "recent_transactions"
+    assert result["source"] == "transaction_history_guard"
+    assert route_workflow(intent=result["intent"], domain=result["domain"]) == "transactions_workflow"
+    assert result.get("tool") is None
+    assert result.get("semanticQuery") is not None
+
+
+@pytest.mark.asyncio
+async def test_hebrew_last_three_transfers_last_month_extracts_semantic_metadata():
+    async def fail_if_called(_payload):
+        raise AssertionError("LLM should not run for transaction history query")
+
+    result = await detect_intent(
+        user_input="מה הם 3 העברות האחרונות שביצעתי בחודש שעבר?",
+        history=[],
+        create_chat_completion=fail_if_called,
+    )
+
+    semantic_query = result["semanticQuery"]
+    assert semantic_query["aggregation"] == "first_n"
+    assert semantic_query["limit"] == 3
+    assert semantic_query["timeRange"] == "last_month"
+    assert semantic_query["filters"]["type"] == "transfer"
+    assert semantic_query["filters"]["direction"] == "outgoing"
+
+
+@pytest.mark.asyncio
 async def test_parser_reraises_cancelled_error():
     async def canceled_chat_completion(_payload):
         raise asyncio.CancelledError()

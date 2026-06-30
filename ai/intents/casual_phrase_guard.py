@@ -29,6 +29,20 @@ CASUAL_SMALL_TALK_PHRASES = frozenset({
     "whats up",
 })
 
+_BANKING_CONTEXT_PATTERNS = tuple(
+    re.compile(pattern, re.IGNORECASE)
+    for pattern in (
+        r"העברות?",
+        r"תנועות",
+        r"עסקאות",
+        r"חשבון",
+        r"יתרה",
+        r"\btransfers?\b",
+        r"\btransactions?\b",
+        r"\bbalance\b",
+    )
+)
+
 _EXPLICIT_SUPPORT_PATTERNS = tuple(
     re.compile(pattern, re.IGNORECASE)
     for pattern in (
@@ -74,8 +88,19 @@ def has_explicit_support_intent(user_input: str) -> bool:
     return any(pattern.search(text) for pattern in _EXPLICIT_SUPPORT_PATTERNS)
 
 
+def has_banking_context(user_input: str) -> bool:
+    text = str(user_input or "").strip()
+    if not text:
+        return False
+    return any(pattern.search(text) for pattern in _BANKING_CONTEXT_PATTERNS)
+
+
 def should_route_as_unknown(*, user_input: str, llm_intent: str | None = None) -> bool:
-    if is_casual_small_talk(user_input) and not has_explicit_support_intent(user_input):
+    if (
+        is_casual_small_talk(user_input)
+        and not has_explicit_support_intent(user_input)
+        and not has_banking_context(user_input)
+    ):
         return True
     if llm_intent == "contact_support" and not has_explicit_support_intent(user_input):
         return True

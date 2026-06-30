@@ -4,6 +4,7 @@ Intent detection — port of detectIntent.js.
 
 from ai.intents.llm_semantic_parser import parse_query_with_llm
 from ai.intents.casual_phrase_guard import guard_intent_routing
+from ai.intents.transaction_history_guard import detect_transaction_history_intent
 from ai.contracts.intent_result_contract import create_intent_result, create_unknown_intent, normalize_intent_result
 from observability.langfuse_tracing import (
     duration_ms,
@@ -40,18 +41,22 @@ async def detect_intent(
         if guarded is not None:
             final_parse = normalize_intent_result(guarded)
         else:
-            parsed = await parse_query_with_llm(
-                user_input=user_input,
-                history=history or [],
-                create_chat_completion=create_chat_completion,
-                abort_signal=abort_signal,
-            )
-            final_parse = normalize_intent_result(
-                parsed or (_LLM_PARSE_FAILED if create_chat_completion else _LLM_UNAVAILABLE)
-            )
-            override = guard_intent_routing(user_input=user_input, parsed=final_parse)
-            if override is not None:
-                final_parse = normalize_intent_result(override)
+            history_intent = detect_transaction_history_intent(user_input)
+            if history_intent is not None:
+                final_parse = normalize_intent_result(history_intent)
+            else:
+                parsed = await parse_query_with_llm(
+                    user_input=user_input,
+                    history=history or [],
+                    create_chat_completion=create_chat_completion,
+                    abort_signal=abort_signal,
+                )
+                final_parse = normalize_intent_result(
+                    parsed or (_LLM_PARSE_FAILED if create_chat_completion else _LLM_UNAVAILABLE)
+                )
+                override = guard_intent_routing(user_input=user_input, parsed=final_parse)
+                if override is not None:
+                    final_parse = normalize_intent_result(override)
 
         result = create_intent_result(
             **{k: v for k, v in final_parse.items() if k not in ("semanticQuery", "source")},
