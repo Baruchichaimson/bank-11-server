@@ -41,9 +41,9 @@ class TransferProfileService:
 
 
 class TransferAccountService:
-    def __init__(self):
+    def __init__(self, *, sender_balance=5000.0):
         self.accounts = {
-            "sender-1": {"_id": "account-sender", "userId": "sender-1", "balance": 5000.0},
+            "sender-1": {"_id": "account-sender", "userId": "sender-1", "balance": sender_balance},
             "receiver-1": {"_id": "account-receiver", "userId": "receiver-1", "balance": 100.0},
         }
 
@@ -71,20 +71,20 @@ class TransferTransactionService:
         return 0
 
 
-def _users_and_accounts():
+def _users_and_accounts(*, sender_balance=5000.0):
     return {
         "sender_user": {"_id": "sender-1", "email": "sender@example.com"},
         "receiver_user": {"_id": "receiver-1", "email": "receiver@example.com"},
-        "sender_account": {"_id": "account-sender", "balance": 5000.0},
+        "sender_account": {"_id": "account-sender", "balance": sender_balance},
         "receiver_account": {"_id": "account-receiver", "balance": 100.0},
     }
 
 
-def _services(*, risk=None, calls=None):
+def _services(*, risk=None, calls=None, sender_balance=5000.0):
     calls = calls if calls is not None else []
     return {
         "profileService": TransferProfileService(),
-        "accountService": TransferAccountService(),
+        "accountService": TransferAccountService(sender_balance=sender_balance),
         "transactionService": TransferTransactionService(calls),
         "riskService": FixedRiskService(risk),
     }
@@ -104,7 +104,15 @@ def _state(amount=100):
     }
 
 
-def _risk_llm(*, analysis_level="LOW", judge_approval="ACCEPTED", malformed_analysis=False, malformed_judge=False, calls=None):
+def _risk_llm(
+    *,
+    analysis_level="LOW",
+    judge_approval="ACCEPTED",
+    malformed_analysis=False,
+    malformed_judge=False,
+    calls=None,
+    expected_amount=100.0,
+):
     calls = calls if calls is not None else []
 
     async def fake_llm(payload):
@@ -114,24 +122,33 @@ def _risk_llm(*, analysis_level="LOW", judge_approval="ACCEPTED", malformed_anal
             assert user_payload["operation"] == "risk_analysis"
             assert user_payload["senderEmail"] == "sender@example.com"
             assert user_payload["receiverEmail"] == "receiver@example.com"
-            assert user_payload["amount"] == 100.0
+            assert user_payload["amount"] == float(expected_amount)
             assert "password" not in user_payload
             return _completion_response("not-json" if malformed_analysis else {"level": analysis_level, "reason": "analysis"})
         if payload["operation"] == "risk_judge":
             assert user_payload["operation"] == "risk_judge"
-            assert user_payload["riskInput"]["amount"] == 100.0
+            assert user_payload["riskInput"]["amount"] == float(expected_amount)
             return _completion_response("not-json" if malformed_judge else {"approval": judge_approval, "reason": "judge"})
         raise AssertionError(f"unexpected operation {payload['operation']}")
 
     return fake_llm
 
 
-async def _evaluate(*, analysis_level="LOW", judge_approval="ACCEPTED", deterministic=None, malformed_analysis=False, malformed_judge=False):
+async def _evaluate(
+    *,
+    amount=100.0,
+    sender_balance=5000.0,
+    analysis_level="LOW",
+    judge_approval="ACCEPTED",
+    deterministic=None,
+    malformed_analysis=False,
+    malformed_judge=False,
+):
     calls = []
     risk = deterministic or {"level": "LOW", "score": 10, "requiresReview": False, "reasons": []}
     result = await evaluate_transfer_execution_risk(
-        **_users_and_accounts(),
-        amount=100.0,
+        **_users_and_accounts(sender_balance=sender_balance),
+        amount=float(amount),
         description="rent",
         services={"riskService": FixedRiskService(risk)},
         create_chat_completion=_risk_llm(
@@ -140,65 +157,72 @@ async def _evaluate(*, analysis_level="LOW", judge_approval="ACCEPTED", determin
             malformed_analysis=malformed_analysis,
             malformed_judge=malformed_judge,
             calls=calls,
+            expected_amount=amount,
         ),
     )
     return result, calls
 
 
+def _assert_allowed(result):
+    assert result["riskDecision"]["allowed"] is True
+    assert result["riskDecision"]["status"] == "evaluated"
+
+
 @pytest.mark.asyncio
-@pytest.mark.parametrize("level", ["LOW", "MEDIUM"])
-async def test_low_or_medium_risk_with_accepted_judge_allows_execution(level):
+@pytest.mark.parametrize("level", ["LOW", "MEDIUM", "HIGH"])
+async def test_risk_analysis_levels_allow_when_balance_is_sufficient(level):
     result, calls = await _evaluate(analysis_level=level)
 
     assert calls == ["risk_analysis", "risk_judge"]
-    assert result["riskDecision"] == {
-        "allowed": True,
-        "status": "evaluated",
-        "reason": "Risk checks passed.",
-    }
+    assert result["riskAnalysis"]["level"] == level
+    _assert_allowed(result)
 
 
 @pytest.mark.asyncio
-async def test_high_risk_analysis_blocks_execution():
-    result, _calls = await _evaluate(analysis_level="HIGH")
+async def test_denied_judge_allows_when_balance_is_sufficient():
+    result, calls = await _evaluate(judge_approval="DENIED")
 
-    assert result["riskAnalysis"]["level"] == "HIGH"
-    assert result["riskDecision"]["allowed"] is False
-
-
-@pytest.mark.asyncio
-async def test_denied_judge_blocks_execution():
-    result, _calls = await _evaluate(judge_approval="DENIED")
-
+    assert calls == ["risk_analysis", "risk_judge"]
     assert result["riskJudge"]["approval"] == "DENIED"
-    assert result["riskDecision"]["allowed"] is False
+    _assert_allowed(result)
 
 
 @pytest.mark.asyncio
-async def test_deterministic_requires_review_blocks_execution_after_llm_checks():
+async def test_deterministic_requires_review_allows_when_balance_is_sufficient():
     result, calls = await _evaluate(
         deterministic={"level": "HIGH", "score": 80, "requiresReview": True, "reasons": ["Very high transfer amount"]}
     )
 
     assert calls == ["risk_analysis", "risk_judge"]
     assert result["deterministicRisk"]["requiresReview"] is True
-    assert result["riskDecision"]["allowed"] is False
+    _assert_allowed(result)
 
 
 @pytest.mark.asyncio
-async def test_malformed_risk_analysis_normalizes_to_high_and_blocks():
-    result, _calls = await _evaluate(malformed_analysis=True)
+async def test_malformed_risk_analysis_allows_when_balance_is_sufficient():
+    result, calls = await _evaluate(malformed_analysis=True)
 
+    assert calls == ["risk_analysis", "risk_judge"]
     assert result["riskAnalysis"]["level"] == "HIGH"
-    assert result["riskDecision"]["allowed"] is False
+    _assert_allowed(result)
 
 
 @pytest.mark.asyncio
-async def test_malformed_risk_judge_normalizes_to_denied_and_blocks():
-    result, _calls = await _evaluate(malformed_judge=True)
+async def test_malformed_risk_judge_allows_when_balance_is_sufficient():
+    result, calls = await _evaluate(malformed_judge=True)
 
+    assert calls == ["risk_analysis", "risk_judge"]
     assert result["riskJudge"]["approval"] == "DENIED"
+    _assert_allowed(result)
+
+
+@pytest.mark.asyncio
+async def test_insufficient_funds_blocks_without_execute():
+    result, calls = await _evaluate(amount=6000.0, sender_balance=5000.0, analysis_level="LOW")
+
+    assert calls == ["risk_analysis", "risk_judge"]
     assert result["riskDecision"]["allowed"] is False
+    assert result["riskDecision"]["status"] == "blocked"
 
 
 @pytest.mark.asyncio
@@ -218,7 +242,7 @@ async def test_transfer_node_runs_gate_before_execute_when_allowed():
 
 
 @pytest.mark.asyncio
-async def test_transfer_node_blocks_without_execute_when_gate_denies():
+async def test_transfer_node_allows_when_high_risk_and_balance_is_sufficient():
     calls = []
     services = _services(calls=calls)
 
@@ -232,17 +256,10 @@ async def test_transfer_node_blocks_without_execute_when_gate_denies():
         },
     )
 
-    assert calls == ["risk_analysis", "risk_judge"]
-    assert services["transactionService"].executed is None
-    assert result["workflowResponse"]["message"] == (
-        "This transfer cannot be completed right now because it requires additional review."
-    )
-    assert result["workflowResponse"]["execution"] == {
-        "executed": False,
-        "operation": "transfer_money",
-        "result": None,
-    }
-    assert result["riskDecision"]["allowed"] is False
+    assert calls == ["risk_analysis", "risk_judge", "execute_transfer"]
+    assert result["workflowResponse"]["execution"]["executed"] is True
+    assert result["riskDecision"]["allowed"] is True
+    assert services["transactionService"].executed is not None
 
 
 @pytest.mark.asyncio
